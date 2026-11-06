@@ -204,7 +204,7 @@ export class SpyBrain {
         if (!isTarget && d < 12 && o.spy.suspicion > 85) threat = threat < 0 ? id : threat;
       }
       if (o.spy && o.spy.revealTimer > 0) wgt += A.suspiciousGain * dt;
-      if (isTarget && d < A.observeRange && o.spy!.disguiseTimer <= 0) wgt += this.skill.observe * dt;
+      if (isTarget && d < A.observeRange && o.spy!.disguiseTimer <= 0) wgt += this.skill.observe * (d < 10 ? 2 : 1) * dt;
       if (!isTarget) wgt *= 1 - A.decayPerSecond * dt;
       if (wgt > 0.01) this.belief.set(id, Math.min(6, wgt));
     }
@@ -254,7 +254,7 @@ export class SpyBrain {
       const d = Math.hypot(dx, dz) || 1;
       const consistent = (dx * info.dx + dz * info.dz) / d > SCAN_COS && d >= lo && d <= hi;
       const v = this.belief.get(id) ?? 0;
-      if (consistent) this.belief.set(id, Math.min(6, Math.max(v, 0.35) * 1.5));
+      if (consistent) this.belief.set(id, Math.min(6, Math.max(v, 0.3) * 1.3));
       else if (v > 0) this.belief.set(id, v * 0.25);
     }
   }
@@ -288,12 +288,13 @@ export class SpyBrain {
           clearGoal(a);
           a.faceYaw = dirToYaw(chosen.x - a.x, chosen.z - a.z) + w.rng.range(-0.6, 0.6);
         }
-        a.maxSpeed = CONFIG.movement.walkSpeed;
+        a.maxSpeed = d > A.strikeRange ? A.hurrySpeed : CONFIG.movement.walkSpeed;
         return;
       }
       // Too far: head toward them.
       this.setState('search');
       this.stopIdle();
+      a.maxSpeed = A.hurrySpeed;
       if (this.repathTimer <= 0 || !a.hasGoal) {
         setGoal(w, a, chosen.x, chosen.y, chosen.z);
         this.repathTimer = 2;

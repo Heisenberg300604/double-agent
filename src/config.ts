@@ -124,8 +124,8 @@ export const CONFIG = {
     headMin: 0.15,
     headMax: 0.35,
     /** Belief gain per second while watching the true target up close (min..max by skill). */
-    observeMin: 0.35,
-    observeMax: 0.7,
+    observeMin: 0.5,
+    observeMax: 0.9,
     observeRange: 22,
     /** Belief gain per second from a visible agent with high suspicion. */
     suspiciousGain: 0.8,
@@ -133,12 +133,14 @@ export const CONFIG = {
     outlineGain: 3,
     /** Prior mass in the confidence denominator ("someone I haven't seen"). */
     unknownPrior: 0.4,
-    decayPerSecond: 0.15,
+    decayPerSecond: 0.3,
     confidence: 0.7,
     strikeConfidence: 0.75,
     lowConfidence: 0.85,
     mistakeChance: 0.05,
     stalkRange: 25,
+    /** Brisk walk while closing in — below the running-suspicion threshold. */
+    hurrySpeed: 2.7,
     stalkMin: 6,
     stalkMax: 12,
     strikeRange: 10,
