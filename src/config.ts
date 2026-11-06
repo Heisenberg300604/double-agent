@@ -1,0 +1,172 @@
+// Every tunable gameplay number lives here.
+
+export const CONFIG = {
+  seed: 20261107,
+
+  sim: {
+    tickRate: 60,
+    /** AI brains think at this rate, staggered across ticks. */
+    aiRate: 10,
+  },
+
+  match: {
+    spies: 8,
+    minSpies: 8,
+    maxSpies: 10,
+    civilians: 72,
+    roundSeconds: 480,
+    respawnSeconds: 5,
+    civilianRespawnSeconds: 20,
+    /** How long a dead spy's body stays on the floor before vanishing (≤ respawn). */
+    bodyLingerSeconds: 4.5,
+    civilianBodyLingerSeconds: 12,
+    spawnMinDistance: 15,
+  },
+
+  body: {
+    radius: 0.3,
+    height: 1.8,
+    crouchHeight: 1.25,
+    sitHeight: 1.35,
+    eyeHeight: 1.65,
+    crouchEyeHeight: 1.1,
+    stepHeight: 0.45,
+    headRadius: 0.15,
+    bodyHalfWidth: 0.26,
+  },
+
+  movement: {
+    walkSpeed: 2.2,
+    runSpeed: 5,
+    crouchSpeed: 1.2,
+    jumpVelocity: 4.4,
+    gravity: 14,
+    groundAccel: 16,
+    airAccel: 3,
+    separationRadius: 0.85,
+    separationStrength: 2.2,
+  },
+
+  score: {
+    target: 100,
+    unseenBonus: 50,
+    headshotBonus: 25,
+    hunter: 50,
+    wrongSpy: -25,
+    civilian: -50,
+    unseenWindow: 2,
+    revealSeconds: 5,
+  },
+
+  health: {
+    max: 100,
+    head: 100,
+    body: 55,
+  },
+
+  weapon: {
+    magSize: 8,
+    reloadTime: 1.5,
+    fireInterval: 0.35,
+    range: 120,
+    drawTime: 0.25,
+    holsterDelayAfterFire: 2,
+    holsterDelayAfterAim: 1.2,
+    fovNormal: 75,
+    fovAim: 55,
+  },
+
+  suspicion: {
+    max: 100,
+    run: 25,
+    drawn: 15,
+    aim: 30,
+    jump: 10,
+    proximityRadius: 1.2,
+    proximityDelay: 3,
+    proximity: 10,
+    decay: 20,
+    exposed: 60,
+  },
+
+  gadgets: {
+    scanner: { cooldown: 20, duration: 2, near: 15, mid: 40, suspicion: 20 },
+    disguise: { cooldown: 45, duration: 20 },
+    smoke: { cooldown: 30, radius: 3.2, duration: 8, throwSpeed: 11, fuse: 1.6 },
+  },
+
+  civilian: {
+    minSpeed: 1.8,
+    maxSpeed: 2.4,
+    idleMin: 5,
+    idleMax: 20,
+    panicSpeed: 4.5,
+    panicMin: 4,
+    panicMax: 6,
+    panicShotRadius: 8,
+    panicBodyRadius: 10,
+    chatChance: 0.25,
+    sitChance: 0.6,
+  },
+
+  perception: {
+    fovDeg: 110,
+    range: 35,
+    hearShot: 20,
+    hearRun: 8,
+  },
+
+  spyAI: {
+    reactionMin: 0.4,
+    reactionMax: 0.9,
+    bodyAccMin: 0.55,
+    bodyAccMax: 0.8,
+    headMin: 0.15,
+    headMax: 0.35,
+    /** Belief gain per second while watching the true target up close (min..max by skill). */
+    observeMin: 0.35,
+    observeMax: 0.7,
+    observeRange: 22,
+    /** Belief gain per second from a visible agent with high suspicion. */
+    suspiciousGain: 0.8,
+    /** Belief gain per second when the target's red outline is visible to its hunter. */
+    outlineGain: 3,
+    /** Prior mass in the confidence denominator ("someone I haven't seen"). */
+    unknownPrior: 0.4,
+    decayPerSecond: 0.15,
+    confidence: 0.7,
+    strikeConfidence: 0.75,
+    lowConfidence: 0.85,
+    mistakeChance: 0.05,
+    stalkRange: 25,
+    stalkMin: 6,
+    stalkMax: 12,
+    strikeRange: 10,
+    loseSightTime: 1.5,
+    fleeTime: 4,
+    followNotice: 5,
+    /** Civilians that happen to walk your way count less toward "being followed". */
+    civilianFollowWeight: 0.25,
+    noticeRadius: 10,
+    evadeCooldown: 20,
+    evadeTime: 7,
+    scanSuspicionLimit: 30,
+    scanConeDeg: 32,
+    retaliateTime: 4,
+  },
+
+  render: {
+    maxPixelRatio: 1.5,
+    viewDistance: 140,
+  },
+
+  quality: {
+    lowFps: 50,
+    highFps: 58,
+    raiseAfter: 5,
+    window: 2,
+    scales: [1, 0.85, 0.7],
+  },
+} as const;
+
+export type GameConfig = typeof CONFIG;

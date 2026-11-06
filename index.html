@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Double Agent</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22%3E%3Crect width=%2232%22 height=%2232%22 rx=%226%22 fill=%22%230d0c0f%22/%3E%3Cpath d=%22M6 13h20l-3-6H9z%22 fill=%22%23c9a25a%22/%3E%3Crect x=%224%22 y=%2213%22 width=%2224%22 height=%222%22 fill=%22%23c9a25a%22/%3E%3Ccircle cx=%2211%22 cy=%2221%22 r=%223.5%22 fill=%22none%22 stroke=%22%23ff3b3b%22 stroke-width=%222%22/%3E%3Ccircle cx=%2221%22 cy=%2221%22 r=%223.5%22 fill=%22none%22 stroke=%22%23ff3b3b%22 stroke-width=%222%22/%3E%3C/svg%3E" />
+    <meta name="description" content="A first-person spy shooter. Find your target in the crowd. Blend in. Don't get found." />
+    <style>
+      :root {
+        --bg: #0d0c0f;
+        --panel: rgba(16, 15, 18, 0.82);
+        --panel-solid: #151418;
+        --line: rgba(201, 162, 90, 0.35);
+        --brass: #c9a25a;
+        --text: #ece6da;
+        --muted: #9a9387;
+        --red: #ff3b3b;
+        --ok: #8fcf9b;
+        --serif: Georgia, 'Times New Roman', serif;
+        --mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+        --sans: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font-family: var(--sans); overflow: hidden; user-select: none; }
+      #app { position: fixed; inset: 0; }
+      #game-canvas { position: absolute; inset: 0; width: 100% !important; height: 100% !important; display: block; }
+      .hidden { display: none !important; }
+
+      /* ------------------------------------------------ HUD */
+      #hud { position: absolute; inset: 0; pointer-events: none; }
+      .chip { background: var(--panel); border: 1px solid var(--line); border-radius: 4px; }
+      #timer { position: absolute; top: 14px; left: 50%; transform: translateX(-50%); padding: 6px 16px; font: 600 22px var(--mono); letter-spacing: 2px; }
+      #timer.low { color: var(--red); }
+      #scorebox { position: absolute; top: 14px; right: 16px; padding: 8px 14px; text-align: right; min-width: 130px; }
+      #scorebox .score { font: 700 26px var(--mono); }
+      #scorebox .rank { font: 13px var(--sans); color: var(--muted); letter-spacing: 1px; text-transform: uppercase; }
+
+      #dossier { position: absolute; top: 96px; right: 16px; width: 220px; padding: 10px 12px; font-size: 13px; }
+      #dossier h4 { margin: 0 0 6px; font: 600 11px var(--sans); letter-spacing: 2px; color: var(--brass); text-transform: uppercase; display: flex; justify-content: space-between; }
+      #dossier .name { font: 600 16px var(--serif); margin-bottom: 4px; }
+      #dossier ul { list-style: none; margin: 0; padding: 0; color: #d8d1c4; line-height: 1.55; }
+      #dossier ul li::before { content: '— '; color: var(--muted); }
+      #dossier .warn { color: var(--red); font-weight: 700; letter-spacing: 1px; margin-top: 4px; }
+      #dossier.flash { animation: flash 0.9s ease-out; }
+      @keyframes flash { 0% { box-shadow: 0 0 0 2px var(--brass); } 100% { box-shadow: 0 0 0 0 transparent; } }
+
+      #killfeed { position: absolute; top: 14px; left: 16px; width: 380px; display: flex; flex-direction: column; gap: 4px; }
+      .feed { padding: 5px 10px; font-size: 13px; background: var(--panel); border-left: 3px solid var(--brass); border-radius: 2px; transition: opacity 0.6s; }
+      .feed.bad { border-left-color: var(--red); }
+      .feed.good { border-left-color: var(--ok); }
+      .feed.fade { opacity: 0; }
+
+      #susp { position: absolute; left: 22px; top: 50%; transform: translateY(-50%); width: 46px; display: flex; flex-direction: column; align-items: center; gap: 6px; }
+      #susp .label { font: 600 10px var(--sans); letter-spacing: 2px; color: var(--muted); writing-mode: vertical-rl; transform: rotate(180deg); }
+      #susp .bar { position: relative; width: 14px; height: 200px; background: rgba(255,255,255,0.08); border: 1px solid var(--line); border-radius: 2px; overflow: hidden; }
+      #susp .fill { position: absolute; left: 0; right: 0; bottom: 0; height: 0; background: var(--brass); transition: height 0.1s linear; }
+      #susp .tick { position: absolute; left: -4px; right: -4px; height: 2px; background: rgba(255,59,59,0.7); bottom: 60%; }
+      #susp.exposed .fill { background: var(--red); }
+      #exposed { font: 800 12px var(--sans); letter-spacing: 2px; color: var(--red); animation: pulse 0.8s infinite alternate; visibility: hidden; }
+      #susp.exposed #exposed { visibility: visible; }
+      @keyframes pulse { from { opacity: 1; } to { opacity: 0.25; } }
+
+      #bottom { position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); display: flex; align-items: flex-end; gap: 18px; }
+      #health { width: 260px; padding: 8px 10px; }
+      #health .row { display: flex; justify-content: space-between; font: 12px var(--sans); color: var(--muted); letter-spacing: 1px; margin-bottom: 5px; }
+      #health .track { height: 8px; background: rgba(255,255,255,0.08); border-radius: 2px; overflow: hidden; }
+      #health .fill { height: 100%; width: 100%; background: var(--text); transition: width 0.15s; }
+      #health.low .fill { background: var(--red); }
+      #ammo { padding: 6px 12px; font: 700 22px var(--mono); min-width: 96px; text-align: center; }
+      #ammo small { font: 12px var(--sans); color: var(--muted); display: block; letter-spacing: 1px; }
+
+      #gadgets { position: absolute; right: 18px; bottom: 20px; display: flex; gap: 10px; }
+      .gadget { position: relative; width: 62px; height: 62px; border-radius: 50%; background: var(--panel); border: 1px solid var(--line); display: grid; place-items: center; overflow: hidden; }
+      .gadget .cd { position: absolute; inset: 0; border-radius: 50%; background: conic-gradient(rgba(0,0,0,0.72) var(--p, 0%), transparent 0); }
+      .gadget svg { width: 26px; height: 26px; stroke: var(--text); fill: none; stroke-width: 1.8; position: relative; }
+      .gadget .key { position: absolute; bottom: 3px; font: 700 10px var(--mono); color: var(--brass); }
+      .gadget .secs { position: absolute; top: 4px; font: 600 10px var(--mono); color: var(--muted); }
+      .gadget.ready { border-color: var(--brass); }
+      .gadget.active { box-shadow: 0 0 0 2px var(--brass); }
+
+      #crosshair { position: absolute; left: 50%; top: 50%; width: 22px; height: 22px; transform: translate(-50%, -50%); }
+      #crosshair::before, #crosshair::after { content: ''; position: absolute; background: rgba(255,255,255,0.85); }
+      #crosshair::before { left: 10px; top: 0; width: 2px; height: 22px; clip-path: polygon(0 0,100% 0,100% 35%,0 35%,0 65%,100% 65%,100% 100%,0 100%); }
+      #crosshair::after { top: 10px; left: 0; height: 2px; width: 22px; clip-path: polygon(0 0,35% 0,35% 100%,0 100%,0 0,65% 0,100% 0,100% 100%,65% 100%); }
+      #dot { position: absolute; left: 50%; top: 50%; width: 3px; height: 3px; transform: translate(-50%,-50%); background: rgba(255,255,255,0.45); border-radius: 50%; }
+      #hitmarker { position: absolute; left: 50%; top: 50%; width: 30px; height: 30px; transform: translate(-50%, -50%) rotate(45deg); opacity: 0; }
+      #hitmarker::before, #hitmarker::after { content: ''; position: absolute; background: #fff; }
+      #hitmarker::before { left: 14px; top: 0; width: 2px; height: 30px; clip-path: polygon(0 0,100% 0,100% 30%,0 30%,0 70%,100% 70%,100% 100%,0 100%); }
+      #hitmarker::after { top: 14px; left: 0; height: 2px; width: 30px; clip-path: polygon(0 0,30% 0,30% 100%,0 100%,0 0,70% 0,100% 0,100% 100%,70% 100%); }
+      #hitmarker.head::before, #hitmarker.head::after { background: var(--red); }
+
+      #damage { position: absolute; left: 50%; top: 50%; width: 0; height: 0; }
+      .dmg { position: absolute; left: -80px; top: -80px; width: 160px; height: 160px; border-radius: 50%; border: 6px solid transparent; border-top-color: rgba(255,59,59,0.85); opacity: 0; }
+
+      #scanner { position: absolute; left: 50%; top: 22%; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 6px; }
+      #scanner .ring { width: 92px; height: 92px; border-radius: 50%; border: 1px solid rgba(207,230,255,0.5); position: relative; background: rgba(10,14,20,0.5); }
+      #scanner .arrow { position: absolute; left: 50%; top: 50%; width: 0; height: 0; }
+      #scanner .arrow::before { content: ''; position: absolute; left: -10px; top: -44px; border-left: 10px solid transparent; border-right: 10px solid transparent; border-bottom: 22px solid var(--red); }
+      #scanner .band { font: 700 13px var(--sans); letter-spacing: 3px; color: #cfe6ff; text-transform: uppercase; }
+      #scanner .floor { font: 11px var(--sans); color: var(--muted); letter-spacing: 1px; }
+
+      #center-msg { position: absolute; left: 50%; top: 34%; transform: translateX(-50%); font: 600 20px var(--serif); letter-spacing: 3px; text-transform: uppercase; color: var(--text); text-shadow: 0 2px 10px #000; opacity: 0; transition: opacity 0.4s; text-align: center; }
+      #center-msg.show { opacity: 1; }
+      #center-msg.bad { color: var(--red); }
+      #revealed { position: absolute; left: 50%; top: 60px; transform: translateX(-50%); font: 800 13px var(--sans); color: var(--red); letter-spacing: 3px; animation: pulse 0.6s infinite alternate; }
+
+      #death { position: absolute; inset: 0; display: grid; place-items: center; background: radial-gradient(transparent 30%, rgba(60,0,0,0.55)); }
+      #death .box { text-align: center; }
+      #death h2 { margin: 0; font: 600 40px var(--serif); letter-spacing: 6px; color: var(--red); }
+      #death p { margin: 8px 0 0; color: var(--text); font-size: 15px; }
+
+      #scoreboard { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(640px, 92vw); padding: 18px 20px; background: var(--panel-solid); }
+      table { width: 100%; border-collapse: collapse; font-size: 14px; }
+      th { text-align: left; font: 600 11px var(--sans); letter-spacing: 1.5px; color: var(--brass); text-transform: uppercase; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+      td { padding: 7px 8px; border-bottom: 1px solid rgba(255,255,255,0.05); }
+      td.num, th.num { text-align: right; font-family: var(--mono); }
+      tr.me td { color: #fff; background: rgba(201,162,90,0.14); }
+
+      #debug { position: absolute; left: 50%; top: 62px; transform: translateX(-50%); padding: 5px 10px; font: 11px var(--mono); line-height: 1.5; white-space: pre; }
+
+      /* ------------------------------------------------ menus */
+      .screen { position: absolute; inset: 0; display: grid; place-items: center; background: radial-gradient(ellipse at center, rgba(13,12,15,0.55), rgba(13,12,15,0.94)); padding: 16px; overflow-y: auto; }
+      .card { background: var(--panel-solid); border: 1px solid var(--line); border-radius: 6px; padding: 28px 32px; width: min(560px, 100%); }
+      .title { text-align: center; }
+      .title h1 { font: 400 clamp(40px, 8vw, 76px) var(--serif); letter-spacing: 12px; margin: 0; color: var(--text); }
+      .title h1 span { color: var(--brass); }
+      .title .tag { color: var(--muted); letter-spacing: 3px; font-size: 13px; text-transform: uppercase; margin: 10px 0 30px; }
+      .btns { display: flex; flex-direction: column; gap: 10px; align-items: center; }
+      button { font: 600 14px var(--sans); letter-spacing: 3px; text-transform: uppercase; color: var(--text); background: transparent; border: 1px solid var(--line); border-radius: 3px; padding: 12px 18px; min-width: 240px; cursor: pointer; transition: background 0.15s, border-color 0.15s; }
+      button:hover, button:focus-visible { background: rgba(201,162,90,0.14); border-color: var(--brass); outline: none; }
+      button.primary { border-color: var(--brass); background: rgba(201,162,90,0.18); }
+      h2.h { font: 400 28px var(--serif); letter-spacing: 4px; margin: 0 0 18px; text-align: center; }
+      .setting { display: grid; grid-template-columns: 1fr 160px 48px; gap: 12px; align-items: center; margin: 12px 0; font-size: 14px; }
+      .setting output { font: 12px var(--mono); color: var(--muted); text-align: right; }
+      input[type=range] { width: 100%; accent-color: var(--brass); }
+      select { background: #0f0e11; color: var(--text); border: 1px solid var(--line); padding: 6px; border-radius: 3px; font: 13px var(--sans); }
+      .howto ol { padding-left: 20px; line-height: 1.6; margin: 0 0 16px; }
+      .howto ol li { margin-bottom: 8px; }
+      .howto b { color: var(--brass); font-weight: 600; }
+      .howto .red { color: var(--red); font-weight: 700; }
+      .keys { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; font-size: 13px; color: #d4cdbf; margin-bottom: 18px; }
+      .keys kbd { font: 11px var(--mono); background: #0c0b0e; border: 1px solid var(--line); border-radius: 3px; padding: 2px 6px; color: var(--brass); white-space: nowrap; }
+      .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 14px 0 20px; text-align: center; }
+      .stats div { border: 1px solid var(--line); border-radius: 4px; padding: 8px; }
+      .stats b { display: block; font: 700 22px var(--mono); }
+      .stats span { font-size: 11px; color: var(--muted); letter-spacing: 1px; text-transform: uppercase; }
+      .result { text-align: center; color: var(--brass); letter-spacing: 3px; font-size: 13px; text-transform: uppercase; margin-bottom: 4px; }
+      #loading { position: absolute; inset: 0; display: grid; place-items: center; font: 14px var(--sans); letter-spacing: 4px; color: var(--muted); background: var(--bg); }
+      #toast { position: absolute; bottom: 110px; left: 50%; transform: translateX(-50%); font-size: 13px; color: var(--muted); letter-spacing: 1px; }
+      @media (max-width: 720px) {
+        #killfeed { width: 60vw; }
+        #dossier { top: 86px; width: 180px; }
+        .setting { grid-template-columns: 1fr 120px 40px; }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <div id="loading">LOADING THE STATION…</div>
+      <div id="hud" class="hidden">
+        <div id="timer" class="chip">8:00</div>
+        <div id="scorebox" class="chip"><div class="score">0</div><div class="rank">1st / 8</div></div>
+        <div id="dossier" class="chip">
+          <h4><span>Dossier</span><span id="dossier-status"></span></h4>
+          <div class="name" id="dossier-name">Target</div>
+          <ul id="dossier-lines"></ul>
+          <div class="warn hidden" id="dossier-warn">TARGET DISGUISED</div>
+        </div>
+        <div id="killfeed"></div>
+        <div id="susp"><div class="bar"><div class="fill"></div><div class="tick"></div></div><div class="label">SUSPICION</div><div id="exposed">EXPOSED</div></div>
+        <div id="crosshair" class="hidden"></div>
+        <div id="dot"></div>
+        <div id="hitmarker"></div>
+        <div id="damage"></div>
+        <div id="scanner" class="hidden"><div class="ring"><div class="arrow"></div></div><div class="band">Near</div><div class="floor"></div></div>
+        <div id="center-msg"></div>
+        <div id="revealed" class="hidden">YOU ARE REVEALED TO ALL SPIES</div>
+        <div id="bottom">
+          <div id="health" class="chip"><div class="row"><span>HEALTH</span><span id="hp-num">100</span></div><div class="track"><div class="fill"></div></div></div>
+          <div id="ammo" class="chip">8<small>/ 8</small></div>
+        </div>
+        <div id="gadgets">
+          <div class="gadget" id="g-scan"><div class="cd"></div><span class="secs"></span><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="7.5" stroke-dasharray="3 3"/><path d="M12 1v4M12 19v4M1 12h4M19 12h4"/></svg><span class="key">Q</span></div>
+          <div class="gadget" id="g-disg"><div class="cd"></div><span class="secs"></span><svg viewBox="0 0 24 24"><path d="M4 11h16M7 11l1.5-6h7L17 11"/><circle cx="8" cy="16" r="3"/><circle cx="16" cy="16" r="3"/><path d="M11 16h2"/></svg><span class="key">E</span></div>
+          <div class="gadget" id="g-smoke"><div class="cd"></div><span class="secs"></span><svg viewBox="0 0 24 24"><path d="M6 17a4 4 0 0 1 1-7.9A5 5 0 0 1 16.6 8 3.5 3.5 0 1 1 18 17z"/><path d="M8 21h8"/></svg><span class="key">F</span></div>
+        </div>
+        <div id="death" class="hidden"><div class="box"><h2>ELIMINATED</h2><p id="death-by"></p><p id="death-timer"></p></div></div>
+        <div id="scoreboard" class="chip hidden"><table><thead><tr><th>Agent</th><th class="num">Kills</th><th class="num">Deaths</th><th class="num">Civilians</th><th class="num">Score</th></tr></thead><tbody></tbody></table></div>
+        <div id="debug" class="chip hidden"></div>
+      </div>
+
+      <div id="menu-title" class="screen hidden">
+        <div class="title">
+          <h1>DOUBLE <span>AGENT</span></h1>
+          <div class="tag">One target. One hunter. A station full of strangers.</div>
+          <div class="btns">
+            <button class="primary" data-action="play">Play</button>
+            <button data-action="howto">How to Play</button>
+            <button data-action="settings">Settings</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="menu-howto" class="screen hidden">
+        <div class="card howto">
+          <h2 class="h">YOUR BRIEFING</h2>
+          <ol>
+            <li><b>Find your target.</b> Your dossier (top right) describes them. Press <b>Q</b> to scan: an arrow shows their direction and distance.</li>
+            <li><b>Blend in.</b> Walk, idle, sit. The crowd is your cover. Someone is hunting <i>you</i> too.</li>
+            <li><b>Watch your suspicion.</b> Running, drawing or aiming your pistol raises it. Above 60 you glow <span class="red">red</span> to your hunter.</li>
+            <li><b>Don't kill civilians.</b> −50 points, and every spy sees where you are.</li>
+          </ol>
+          <div class="keys">
+            <kbd>WASD</kbd><span>Walk · <kbd>Shift</kbd> run · <kbd>Ctrl</kbd>/<kbd>C</kbd> crouch · <kbd>Space</kbd> jump</span>
+            <kbd>RMB</kbd><span>Draw &amp; aim · <kbd>LMB</kbd> fire · <kbd>R</kbd> reload</span>
+            <kbd>Q E F</kbd><span>Scanner · Disguise · Smoke</span>
+            <kbd>Tab</kbd><span>Scoreboard · <kbd>Esc</kbd> pause · <kbd>F3</kbd> debug</span>
+          </div>
+          <div class="btns"><button class="primary" data-action="howto-done">Got it</button></div>
+        </div>
+      </div>
+
+      <div id="menu-settings" class="screen hidden">
+        <div class="card">
+          <h2 class="h">SETTINGS</h2>
+          <label class="setting">Mouse sensitivity<input type="range" id="set-sens" min="0.2" max="3" step="0.05" /><output id="out-sens"></output></label>
+          <label class="setting">Field of view<input type="range" id="set-fov" min="60" max="100" step="1" /><output id="out-fov"></output></label>
+          <label class="setting">Master volume<input type="range" id="set-vol" min="0" max="1" step="0.05" /><output id="out-vol"></output></label>
+          <label class="setting">Quality<select id="set-quality"><option value="auto">Auto</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select><output></output></label>
+          <div class="btns" style="margin-top: 20px"><button class="primary" data-action="settings-back">Back</button></div>
+        </div>
+      </div>
+
+      <div id="menu-pause" class="screen hidden">
+        <div class="title">
+          <h2 class="h">PAUSED</h2>
+          <div class="btns">
+            <button class="primary" data-action="resume">Resume</button>
+            <button data-action="howto">How to Play</button>
+            <button data-action="settings">Settings</button>
+            <button data-action="quit">Quit to Title</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="menu-end" class="screen hidden">
+        <div class="card" style="width: min(680px, 100%)">
+          <div class="result" id="end-result"></div>
+          <h2 class="h" id="end-title">ROUND OVER</h2>
+          <div class="stats" id="end-stats"></div>
+          <table><thead><tr><th>#</th><th>Agent</th><th class="num">Kills</th><th class="num">Deaths</th><th class="num">Civilians</th><th class="num">Score</th></tr></thead><tbody id="end-table"></tbody></table>
+          <div class="btns" style="margin-top: 22px"><button class="primary" data-action="again">Play Again</button><button data-action="quit">Title Screen</button></div>
+        </div>
+      </div>
+      <div id="toast" class="hidden"></div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

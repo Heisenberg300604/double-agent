@@ -1,0 +1,21 @@
+import { buildGrandStation } from '../src/world/mapData';
+import { CollisionWorld } from '../src/world/collision';
+import { NavGraph } from '../src/world/navGraph';
+const t0 = performance.now();
+const L = buildGrandStation();
+const col = new CollisionWorld(L);
+const nav = new NavGraph(L, col);
+const t1 = performance.now();
+let edges = 0; nav.adj.forEach(a => edges += a.length);
+console.log('boxes', L.boxes.length, 'collide', col.boxes.length, 'nodes', nav.nodes.length, 'edges', edges/2, 'build ms', (t1-t0).toFixed(1));
+console.log('pois', L.pois.length, 'usable', nav.pois.length);
+const dropped = L.pois.filter(p => nav.poiNode[p.id] < 0).map(p => `${p.kind}@${p.x.toFixed(1)},${p.z.toFixed(1)}`);
+console.log('dropped', dropped.join(' '));
+const notMain = nav.nodes.map((n,i)=>[n,i] as const).filter(([,i]) => !nav.inMain(i)).map(([n]) => `${n.x.toFixed(1)},${n.y.toFixed(1)},${n.z.toFixed(1)}`);
+console.log('not-main nodes', notMain.length, notMain.slice(0,30).join(' | '));
+const bal = nav.nodes.filter(n => n.y > 4).length;
+console.log('balcony nodes', bal);
+const a = nav.nearestNode(-36,0,0), b = nav.nearestNode(-8,5,12), c = nav.nearestNode(35,0,-20);
+console.log('path to balcony', nav.findPath(a,b)?.map(i=>`${nav.nodes[i].x.toFixed(0)},${nav.nodes[i].y.toFixed(1)},${nav.nodes[i].z.toFixed(0)}`).join(' > '));
+console.log('path len to platform3', nav.findPath(b,c)?.length);
+for (const s of L.spawns) { const g = col.groundHeight(s.x,s.z,s.y+0.1); if (!col.circleFree(s.x,s.z,g,0.4,1.8) || Math.abs(g-s.y)>0.3) console.log('BAD SPAWN', s, g); }
