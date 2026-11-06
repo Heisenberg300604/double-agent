@@ -66,7 +66,7 @@ export class SpyBrain {
       headChance: A.headMin + (A.headMax - A.headMin) * r.next(),
       observe: A.observeMin + (A.observeMax - A.observeMin) * r.next(),
     };
-    this.scanDelay = r.range(3, 14);
+    this.scanDelay = r.range(A.firstScanMin, A.firstScanMax);
   }
 
   private setState(s: BotState): void {
@@ -164,6 +164,13 @@ export class SpyBrain {
     }
     // Threat tracking for evasion.
     let threat = -1;
+
+    // Hearing: a silenced shot within range marks the shooter as a spy.
+    for (const n of w.noises) {
+      if (n.kind !== 'shot' || n.source === a.id || w.time - n.time > dt + 1e-6) continue;
+      if (Math.hypot(n.x - a.x, n.z - a.z) > CONFIG.perception.hearShot) continue;
+      if (tgt >= 0 && w.agents[n.source].alive) this.addBelief(n.source, A.suspiciousGain * 0.75);
+    }
 
     w.hash.query(a.x, a.z, CONFIG.perception.range, this.nbr);
     for (const id of this.nbr) {
@@ -274,7 +281,7 @@ export class SpyBrain {
         this.stopIdle();
         this.setState('stalk');
         const visible = canSee(w, a, chosen, A.strikeRange + 2);
-        if (d < A.strikeRange && visible && this.confidence >= A.strikeConfidence) {
+        if (d < A.strikeRange && visible && this.confidence >= A.strikeConfidence && w.time > A.openingGrace) {
           this.beginStrike(chosen.id, false);
           return;
         }

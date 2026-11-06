@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { CONFIG } from '../src/config';
-import { addSuspicion, isExposed, onFired, updateSuspicion } from '../src/sim/suspicion';
+import { addSuspicion, isExposed, onFired, updateSuspicion, type SuspicionInput } from '../src/sim/suspicion';
 import { emptyIntent, type SpyState } from '../src/sim/types';
 
 function spy(): SpyState {
@@ -11,7 +11,7 @@ function spy(): SpyState {
     seenBy: new Map(), lastAttacker: -1, lastAttackTime: 0, running: false, intent: emptyIntent(),
   };
 }
-const idle = { running: false, drawn: false, aiming: false, nearSpy: false };
+const idle: SuspicionInput = { running: false, drawn: false, aiming: false, nearSpy: false };
 const run = (s: SpyState, inp: typeof idle, secs: number): void => {
   for (let t = 0; t < secs; t += 1 / 60) updateSuspicion(s, inp, 1 / 60);
 };
@@ -60,5 +60,15 @@ describe('suspicion', () => {
     onFired(s);
     expect(s.suspicion).toBe(100);
     expect(isExposed(s)).toBe(true);
+  });
+});
+
+describe('panic cover', () => {
+  it('running inside a panicking crowd raises suspicion more slowly', () => {
+    const a = spy();
+    const b = spy();
+    run(a, { ...idle, running: true }, 1);
+    run(b, { ...idle, running: true, cover: true }, 1);
+    expect(b.suspicion).toBeCloseTo(a.suspicion * CONFIG.suspicion.runCoverFactor, 0);
   });
 });

@@ -147,7 +147,8 @@
       .stats span { font-size: 11px; color: var(--muted); letter-spacing: 1px; text-transform: uppercase; }
       .result { text-align: center; color: var(--brass); letter-spacing: 3px; font-size: 13px; text-transform: uppercase; margin-bottom: 4px; }
       #loading { position: absolute; inset: 0; display: grid; place-items: center; font: 14px var(--sans); letter-spacing: 4px; color: var(--muted); background: var(--bg); }
-      #toast { position: absolute; bottom: 110px; left: 50%; transform: translateX(-50%); font-size: 13px; color: var(--muted); letter-spacing: 1px; }
+      #toast { position: absolute; bottom: 96px; left: 50%; transform: translateX(-50%); max-width: min(560px, 90vw); text-align: center; font-size: 14px; color: var(--text); letter-spacing: 0.5px; padding: 8px 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 4px; }
+      #toast b { color: var(--brass); }
       @media (max-width: 720px) {
         #killfeed { width: 60vw; }
         #dossier { top: 86px; width: 180px; }
@@ -188,6 +189,7 @@
         <div id="death" class="hidden"><div class="box"><h2>ELIMINATED</h2><p id="death-by"></p><p id="death-timer"></p></div></div>
         <div id="scoreboard" class="chip hidden"><table><thead><tr><th>Agent</th><th class="num">Kills</th><th class="num">Deaths</th><th class="num">Civilians</th><th class="num">Score</th></tr></thead><tbody></tbody></table></div>
         <div id="debug" class="chip hidden"></div>
+        <div id="toast" class="hidden"></div>
       </div>
 
       <div id="menu-title" class="screen hidden">
@@ -212,7 +214,7 @@
             <li><b>Don't kill civilians.</b> −50 points, and every spy sees where you are.</li>
           </ol>
           <div class="keys">
-            <kbd>WASD</kbd><span>Walk · <kbd>Shift</kbd> run · <kbd>Ctrl</kbd>/<kbd>C</kbd> crouch · <kbd>Space</kbd> jump</span>
+            <kbd>WASD</kbd><span>Walk · <kbd>Shift</kbd> run · <kbd>C</kbd>/<kbd>Ctrl</kbd> crouch · <kbd>Space</kbd> jump</span>
             <kbd>RMB</kbd><span>Draw &amp; aim · <kbd>LMB</kbd> fire · <kbd>R</kbd> reload</span>
             <kbd>Q E F</kbd><span>Scanner · Disguise · Smoke</span>
             <kbd>Tab</kbd><span>Scoreboard · <kbd>Esc</kbd> pause · <kbd>F3</kbd> debug</span>
@@ -253,7 +255,6 @@
           <div class="btns" style="margin-top: 22px"><button class="primary" data-action="again">Play Again</button><button data-action="quit">Title Screen</button></div>
         </div>
       </div>
-      <div id="toast" class="hidden"></div>
     </div>
     <script type="module" src="/src/main.ts"></script>
   </body>

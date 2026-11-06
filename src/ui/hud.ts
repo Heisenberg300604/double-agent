@@ -70,6 +70,8 @@ export class Hud {
   private readonly board = $('#scoreboard');
   private readonly boardBody = $('#scoreboard tbody');
   private readonly debugEl = $('#debug');
+  private readonly toastEl = $('#toast');
+  private toastTimer = 0;
   private readonly damageRoot = $('#damage');
   private readonly gadgetEls = ['#g-scan', '#g-disg', '#g-smoke'].map((s) => $(s));
   private readonly cache = new Map<string, string | number | boolean>();
@@ -170,6 +172,10 @@ export class Hud {
       this.hitTimer -= dt;
       this.hit.style.opacity = String(Math.max(0, this.hitTimer / 0.25));
     }
+    if (this.toastTimer > 0) {
+      this.toastTimer -= dt;
+      if (this.toastTimer <= 0) this.toastEl.classList.add('hidden');
+    }
     if (this.centerTimer > 0) {
       this.centerTimer -= dt;
       if (this.centerTimer <= 0) this.center.classList.remove('show');
@@ -203,6 +209,13 @@ export class Hud {
     this.center.classList.toggle('bad', bad);
     this.center.classList.add('show');
     this.centerTimer = secs;
+  }
+
+  /** Short contextual tip above the health bar. */
+  toast(text: string, secs = 6): void {
+    this.toastEl.textContent = text;
+    this.toastEl.classList.remove('hidden');
+    this.toastTimer = secs;
   }
 
   killfeed(text: string, kind: 'good' | 'bad' | 'neutral' = 'neutral'): void {
@@ -251,6 +264,8 @@ export class Hud {
 
   reset(): void {
     this.cache.clear();
+    this.toastTimer = 0;
+    this.toastEl.classList.add('hidden');
     this.clearFeed();
     this.center.classList.remove('show');
     for (const el of this.dmgEls) el.style.opacity = '0';

@@ -36,6 +36,7 @@ class Game {
   private debugOn = false;
   private frameMs = 16;
   private simMs = 0;
+  private renderMs = 0;
   private camEye: number = CONFIG.body.eyeHeight;
   private stepDist = 0;
   private deathBy = '';
@@ -43,6 +44,10 @@ class Game {
   private attractT = 0;
   private readonly cam: CameraPose = { x: 0, y: 0, z: 0, yaw: 0, pitch: 0, roll: 0 };
   private seed = 0;
+  /** One-time contextual tips for new players. */
+  private hints = new Set<string>();
+  private matchTime = 0;
+  private remoteStepTimer = 0;
 
   constructor() {
     this.settings = loadSettings();
@@ -84,12 +89,20 @@ class Game {
     document.addEventListener('click', () => {
       if (this.state === 'playing' && !this.input.locked) this.input.requestLock();
     });
+    // Ctrl (crouch) + W (walk) is the browser's close-tab shortcut: ask before leaving mid-match.
+    window.addEventListener('beforeunload', (e) => {
+      if (this.state === 'playing' || this.state === 'paused') {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    });
     document.addEventListener('visibilitychange', () => {
       if (document.hidden && this.state === 'playing') this.pause();
       this.audio.suspend(document.hidden);
     });
 
     document.getElementById('loading')!.remove();
+    console.info(`[double-agent] ready in ${Math.round(performance.now())} ms`);
     this.menus.show('title');
     requestAnimationFrame((t) => this.frame(t));
   }
@@ -120,12 +133,14 @@ class Game {
     this.input.clearPresses();
     this.input.requestLock();
     this.hud.centerMessage('Find your target. Blend in.', false, 3);
+    this.matchTime = 0;
     this.lastTime = performance.now();
   }
 
   private pause(): void {
     if (this.state !== 'playing') return;
     this.state = 'paused';
+    this.input.exitLock();
     this.menus.show('pause');
     this.hud.setScoreboard(false);
   }
@@ -383,7 +398,9 @@ class Game {
       }
       this.audio.setListener({ x: this.cam.x, y: this.cam.y, z: this.cam.z, yaw: this.yaw });
       this.footsteps(me, dt);
+      this.remoteFootsteps(dt);
       this.updateHud(dt, tgt);
+      if (this.state === 'playing') this.updateHints(dt, tgt);
     } else {
       // Attract mode: slow pan across the concourse from the balcony.
       this.attractT += dt;
@@ -398,6 +415,7 @@ class Game {
 
     const sp = me?.spy;
     const playing = this.state !== 'title' && !!me && me.alive;
+    const r0 = performance.now();
     this.renderer.render(w, this.cam, {
       dt, alpha,
       hideId: me ? me.id : -1,
@@ -408,12 +426,13 @@ class Game {
       moveSpeed: me?.speed ?? 0,
       showViewmodel: playing,
     });
+    this.renderMs += (performance.now() - r0 - this.renderMs) * 0.05;
     this.audio.update(dt);
 
     if (this.debugOn) {
       const r = this.renderer;
       this.hud.setDebug(
-        `FPS ${(1000 / this.frameMs).toFixed(0)} (avg ${r.scaler.averageFps().toFixed(0)})  frame ${this.frameMs.toFixed(2)} ms  sim ${this.simMs.toFixed(2)} ms\n` +
+        `FPS ${(1000 / this.frameMs).toFixed(0)} (avg ${r.scaler.averageFps().toFixed(0)})  frame ${this.frameMs.toFixed(2)} ms  sim ${this.simMs.toFixed(2)} ms  render ${this.renderMs.toFixed(2)} ms\n` +
         `draw calls ${r.drawCalls}  tris ${(r.triangles / 1000).toFixed(1)}k  scale ${r.renderScale.toFixed(2)}  quality ${r.setting}/${r.level}\n` +
         `agents ${w.agents.length}  spies ${w.spies.length}  seed ${this.seed}`,
       );
@@ -430,6 +449,35 @@ class Game {
     if (this.stepDist > stride) {
       this.stepDist = 0;
       if (!me.crouch) this.audio.footstep(undefined, running);
+    }
+  }
+
+  private hint(key: string, text: string): void {
+    if (this.hints.has(key)) return;
+    this.hints.add(key);
+    this.hud.toast(text);
+  }
+
+  private updateHints(dt: number, tgt: Agent | null): void {
+    const me = this.world.player!;
+    const s = me.spy!;
+    this.matchTime += dt;
+    if (!me.alive) return;
+    if (this.matchTime > 5 && s.cdScanner === 0 && s.scanTimer === 0) this.hint('scan', 'Press Q to scan — the arrow points to your target.');
+    if (s.scanTimer > 0) this.hint('scanned', 'Match the dossier (top right) against people in that direction.');
+    if (s.suspicion >= CONFIG.suspicion.exposed) this.hint('exposed', 'You are EXPOSED: your hunter sees you outlined in red. Walk calmly to cool off.');
+    if (tgt && tgt.alive && tgt.spy!.suspicion >= CONFIG.suspicion.exposed) this.hint('outline', 'Your target is exposed — the red outline gives them away.');
+    if (this.matchTime > 40 && s.cdDisguise === 0) this.hint('gadgets', 'Feel watched? E changes your suit, F throws smoke that blocks sight.');
+  }
+
+  private remoteFootsteps(dt: number): void {
+    this.remoteStepTimer -= dt;
+    if (this.remoteStepTimer > 0) return;
+    this.remoteStepTimer = 0.32;
+    const me = this.world.player!;
+    for (const s of this.world.spies) {
+      if (s === me || !s.alive || !s.spy!.running) continue;
+      if (Math.hypot(s.x - me.x, s.z - me.z) < CONFIG.perception.hearRun + 2) this.audio.footstep({ x: s.x, y: s.y, z: s.z }, true);
     }
   }
 

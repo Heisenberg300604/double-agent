@@ -502,7 +502,10 @@ export class World {
     for (const s of this.spies) {
       if (!s.alive) continue;
       const sp = s.spy!;
-      updateSuspicion(sp, { running: sp.running, drawn: sp.drawn, aiming: sp.aiming, nearSpy: this.nearOtherSpy(s) }, dt);
+      updateSuspicion(sp, {
+        running: sp.running, drawn: sp.drawn, aiming: sp.aiming, nearSpy: this.nearOtherSpy(s),
+        cover: sp.running && this.inPanickingCrowd(s),
+      }, dt);
     }
 
     // Smoke.
@@ -578,6 +581,16 @@ export class World {
     for (const o of this.spies) {
       if (o === a || !o.alive) continue;
       if (Math.abs(o.y - a.y) < 1.5 && Math.hypot(o.x - a.x, o.z - a.z) < R) return true;
+    }
+    return false;
+  }
+
+  private inPanickingCrowd(a: Agent): boolean {
+    const R = CONFIG.suspicion.coverRadius;
+    this.hash.query(a.x, a.z, R, this.nbr);
+    for (const id of this.nbr) {
+      const o = this.agents[id];
+      if (o.civ && o.alive && o.civ.state === 'panic' && Math.hypot(o.x - a.x, o.z - a.z) < R) return true;
     }
     return false;
   }

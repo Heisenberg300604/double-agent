@@ -79,6 +79,9 @@ export const CONFIG = {
   suspicion: {
     max: 100,
     run: 25,
+    /** Running inside a panicking crowd is less conspicuous. */
+    runCoverFactor: 0.4,
+    coverRadius: 6,
     drawn: 15,
     aim: 30,
     jump: 10,
@@ -124,11 +127,11 @@ export const CONFIG = {
     headMin: 0.15,
     headMax: 0.35,
     /** Belief gain per second while watching the true target up close (min..max by skill). */
-    observeMin: 0.5,
-    observeMax: 0.9,
+    observeMin: 0.4,
+    observeMax: 0.75,
     observeRange: 22,
     /** Belief gain per second from a visible agent with high suspicion. */
-    suspiciousGain: 0.8,
+    suspiciousGain: 0.5,
     /** Belief gain per second when the target's red outline is visible to its hunter. */
     outlineGain: 3,
     /** Prior mass in the confidence denominator ("someone I haven't seen"). */
@@ -155,6 +158,10 @@ export const CONFIG = {
     scanSuspicionLimit: 30,
     scanConeDeg: 32,
     retaliateTime: 4,
+    /** Nobody strikes during the opening seconds of a round (time to read the dossier). */
+    openingGrace: 20,
+    firstScanMin: 8,
+    firstScanMax: 18,
   },
 
   render: {

@@ -155,7 +155,7 @@ export class GameRenderer {
     this.camera.rotation.set(cam.pitch, cam.yaw, cam.roll);
 
     this.crowd.update(world.agents, o.alpha, o.hideId, o.outlined);
-    this.effects.update(o.dt, world.smokes, o.revealed);
+    this.effects.update(o.dt, world.smokes, o.revealed, this.camera.position);
     this.viewmodel.update(o.dt, o.drawn && o.showViewmodel, o.aiming, o.reloading, o.moveSpeed, this.camera.aspect, this.fov * 0.85);
 
     const r = this.renderer;

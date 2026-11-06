@@ -9,12 +9,14 @@ export interface SuspicionInput {
   aiming: boolean;
   /** Within proximity radius of another spy this tick. */
   nearSpy: boolean;
+  /** Surrounded by panicking civilians (noise covers running). */
+  cover?: boolean;
 }
 
 export function updateSuspicion(s: SpyState, inp: SuspicionInput, dt: number): void {
   const c = CONFIG.suspicion;
   let gain = 0;
-  if (inp.running) gain += c.run;
+  if (inp.running) gain += c.run * (inp.cover ? c.runCoverFactor : 1);
   if (inp.drawn) gain += c.drawn;
   if (inp.aiming) gain += c.aim;
   if (inp.nearSpy) {

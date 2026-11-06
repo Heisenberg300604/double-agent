@@ -138,7 +138,7 @@ export class Effects {
     r.mesh.visible = true;
   }
 
-  update(dt: number, smokes: readonly Smoke[], revealed: readonly { x: number; y: number; z: number }[]): void {
+  update(dt: number, smokes: readonly Smoke[], revealed: readonly { x: number; y: number; z: number }[], cam: THREE.Vector3): void {
     this.time += dt;
     // Tracers.
     let i = 0;
@@ -241,6 +241,8 @@ export class Effects {
       mk.visible = true;
       mk.position.set(p.x, p.y + 2.35 + Math.sin(this.time * 4) * 0.08, p.z);
       mk.rotation.y = this.time * 2;
+      // Keep the marker readable at range.
+      mk.scale.setScalar(Math.max(1, mk.position.distanceTo(cam) / 12));
     }
   }
 
