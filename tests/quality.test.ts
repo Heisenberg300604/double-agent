@@ -35,3 +35,20 @@ describe('fixed timestep', () => {
     }
   });
 });
+
+describe('auto-quality back-off', () => {
+  it('does not ping-pong render scale when a raise immediately causes a drop', () => {
+    const q = new QualityScaler();
+    let changes = 0;
+    const feed = (fps: number, secs: number): void => {
+      for (let i = 0; i < fps * secs; i++) if (q.update(1 / fps)) changes++;
+    };
+    feed(40, 3); // drop to 0.85
+    for (let cycle = 0; cycle < 6; cycle++) {
+      feed(60, 6); // looks fine at the lower scale...
+      feed(45, 3); // ...but full scale is too slow again
+    }
+    // Without back-off this flips ~12 times; with it, only a few.
+    expect(changes).toBeLessThanOrEqual(5);
+  });
+});

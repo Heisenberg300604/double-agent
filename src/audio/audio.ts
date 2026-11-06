@@ -16,7 +16,16 @@ export class AudioEngine {
   private volume = 0.8;
   private listener: Listener = { x: 0, y: 0, z: 0, yaw: 0 };
   private ambient: GainNode | null = null;
-  private chimeTimer = 30;
+  private reverb!: ConvolverNode;
+  private reverbSend!: GainNode;
+  private crowdGain: GainNode | null = null;
+  private windGain: GainNode | null = null;
+  private crowdLayers: { gain: GainNode; rate: number; phase: number }[] = [];
+  private patterTimer = 0;
+  private rumbleTimer = 40;
+  private density = 0.5;
+  private platformness = 0;
+  private time = 0;
 
   get ready(): boolean {
     return this.ctx !== null && this.ctx.state === 'running';
@@ -39,6 +48,12 @@ export class AudioEngine {
     this.master.connect(comp).connect(this.ctx.destination);
     this.sfx = this.ctx.createGain();
     this.sfx.connect(this.master);
+    // Big-hall reverb from a procedurally generated impulse response.
+    this.reverb = this.ctx.createConvolver();
+    this.reverb.buffer = this.impulse(2.6, 2.2);
+    this.reverbSend = this.ctx.createGain();
+    this.reverbSend.gain.value = 0.32;
+    this.sfx.connect(this.reverbSend).connect(this.reverb).connect(this.master);
     const len = this.ctx.sampleRate * 2;
     this.noise = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
     const d = this.noise.getChannelData(0);
@@ -61,13 +76,53 @@ export class AudioEngine {
     this.listener = l;
   }
 
+  /** density: 0..1 how crowded the listener's surroundings are; platform: 0..1 how far onto the platforms. */
+  setSurroundings(density: number, platform: number): void {
+    this.density = density;
+    this.platformness = platform;
+  }
+
   update(dt: number): void {
     if (!this.ready) return;
-    this.chimeTimer -= dt;
-    if (this.chimeTimer <= 0) {
-      this.chimeTimer = 90;
-      this.chime();
+    const ctx = this.ctx!;
+    this.time += dt;
+    // Crowd chatter: formant bands with syllable-rate amplitude modulation.
+    const crowdLevel = (0.35 + 0.65 * this.density) * (1 - 0.55 * this.platformness);
+    if (this.crowdGain) this.crowdGain.gain.setTargetAtTime(crowdLevel, ctx.currentTime, 0.4);
+    if (this.windGain) this.windGain.gain.setTargetAtTime(0.03 + 0.12 * this.platformness, ctx.currentTime, 0.6);
+    for (const l of this.crowdLayers) {
+      l.phase += dt * l.rate * (0.7 + Math.random() * 0.6);
+      const syll = Math.max(0, Math.sin(l.phase)) * (0.5 + 0.5 * Math.sin(l.phase * 0.13 + 1));
+      l.gain.gain.setTargetAtTime(0.02 + syll * 0.06, ctx.currentTime, 0.05);
     }
+    // Soft footsteps of the crowd around you.
+    this.patterTimer -= dt;
+    if (this.patterTimer <= 0) {
+      this.patterTimer = 0.12 + Math.random() * (0.6 - 0.45 * this.density);
+      this.patter();
+    }
+    // Distant trains.
+    this.rumbleTimer -= dt;
+    if (this.rumbleTimer <= 0) {
+      this.rumbleTimer = 45 + Math.random() * 50;
+      this.distantTrain();
+    }
+  }
+
+  private impulse(seconds: number, decay: number): AudioBuffer {
+    const ctx = this.ctx!;
+    const len = Math.floor(ctx.sampleRate * seconds);
+    const buf = ctx.createBuffer(2, len, ctx.sampleRate);
+    for (let ch = 0; ch < 2; ch++) {
+      const d = buf.getChannelData(ch);
+      for (let i = 0; i < len; i++) {
+        const t = i / len;
+        // Early reflections + diffuse tail.
+        const early = i < ctx.sampleRate * 0.08 && Math.random() < 0.004 ? 0.8 : 0;
+        d[i] = ((Math.random() * 2 - 1) * Math.pow(1 - t, decay) + early) * 0.6;
+      }
+    }
+    return buf;
   }
 
   // ---------------------------------------------------------------- helpers
@@ -263,7 +318,7 @@ export class AudioEngine {
   }
 
   chime(): void {
-    const o = this.out(undefined, 0, 0.32);
+    const o = this.out(undefined, 0, 0.42);
     if (!o) return;
     const ctx = this.ctx!, t = ctx.currentTime;
     [659, 523, 784, 659].forEach((f, i) => {
@@ -278,6 +333,175 @@ export class AudioEngine {
         osc.stop(t + i * 0.45 + 1.8);
       }
     });
+  }
+
+  private patter(): void {
+    const ctx = this.ctx!, t = ctx.currentTime;
+    const n = this.noiseSrc();
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = 700 + Math.random() * 900;
+    bp.Q.value = 2;
+    const g = ctx.createGain();
+    const pan = ctx.createStereoPanner ? ctx.createStereoPanner() : null;
+    this.env(g, t, 0.003, 0.05 * (0.4 + this.density) * (1 - 0.6 * this.platformness), 0.05);
+    n.connect(bp).connect(g);
+    if (pan) {
+      pan.pan.value = Math.random() * 2 - 1;
+      g.connect(pan).connect(this.sfx);
+    } else {
+      g.connect(this.sfx);
+    }
+    n.start(t);
+    n.stop(t + 0.08);
+  }
+
+  private distantTrain(): void {
+    if (!this.ready) return;
+    const ctx = this.ctx!, t = ctx.currentTime;
+    // Low rumble swell.
+    const n = this.noiseSrc();
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = 140;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(0.35, t + 3);
+    g.gain.linearRampToValueAtTime(0.0001, t + 8);
+    n.connect(lp).connect(g).connect(this.sfx);
+    n.start(t);
+    n.stop(t + 8.2);
+    // Far-off two-tone horn.
+    if (Math.random() < 0.6) {
+      for (const f of [311, 370]) {
+        const o = ctx.createOscillator();
+        o.type = 'sawtooth';
+        o.frequency.value = f;
+        const bp = ctx.createBiquadFilter();
+        bp.type = 'bandpass';
+        bp.frequency.value = 900;
+        bp.Q.value = 1.2;
+        const hg = ctx.createGain();
+        hg.gain.setValueAtTime(0.0001, t + 2);
+        hg.gain.linearRampToValueAtTime(0.022, t + 2.15);
+        hg.gain.setValueAtTime(0.022, t + 3.1);
+        hg.gain.linearRampToValueAtTime(0.0001, t + 3.5);
+        o.connect(bp).connect(hg).connect(this.sfx);
+        o.start(t + 2);
+        o.stop(t + 3.6);
+      }
+    }
+  }
+
+  /** Door-closing warning beeps from a train. */
+  doorBeeps(pos: { x: number; y: number; z: number }): void {
+    const o = this.out(pos, 45, 0.5);
+    if (!o) return;
+    const ctx = this.ctx!, t = ctx.currentTime;
+    for (let i = 0; i < 6; i++) {
+      const osc = ctx.createOscillator();
+      osc.type = 'triangle';
+      osc.frequency.value = 2350;
+      const g = ctx.createGain();
+      this.env(g, t + i * 0.32, 0.01, 0.25, 0.16);
+      osc.connect(g).connect(o);
+      osc.start(t + i * 0.32);
+      osc.stop(t + i * 0.32 + 0.2);
+    }
+  }
+
+  /**
+   * Station announcement: the chime, then the voice. Uses the browser's speech
+   * synthesiser when available, otherwise a procedural PA babble.
+   */
+  announce(text: string): void {
+    if (!this.ready) return;
+    this.chime();
+    window.setTimeout(() => this.speak(text), 2100);
+  }
+
+  private speak(text: string): void {
+    if (!this.ready) return;
+    const synth = typeof window !== 'undefined' ? window.speechSynthesis : undefined;
+    this.paHiss(text.length * 0.07);
+    if (synth && typeof SpeechSynthesisUtterance !== 'undefined') {
+      try {
+        const u = new SpeechSynthesisUtterance(text);
+        u.rate = 0.92;
+        u.pitch = 0.85;
+        u.volume = Math.min(1, this.volume * 0.55);
+        const voices = synth.getVoices();
+        const v = voices.find((x) => /en-GB/i.test(x.lang)) ?? voices.find((x) => /^en/i.test(x.lang));
+        if (v) u.voice = v;
+        synth.cancel();
+        synth.speak(u);
+        return;
+      } catch {
+        /* fall back to babble */
+      }
+    }
+    this.babble(text.length * 0.07);
+  }
+
+  stopSpeech(): void {
+    try {
+      window.speechSynthesis?.cancel();
+    } catch {
+      /* ignore */
+    }
+  }
+
+  /** Band-limited PA hiss under the voice. */
+  private paHiss(seconds: number): void {
+    const ctx = this.ctx!, t = ctx.currentTime;
+    const n = this.noiseSrc();
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = 2500;
+    bp.Q.value = 0.7;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(0.012, t + 0.2);
+    g.gain.setValueAtTime(0.012, t + seconds);
+    g.gain.linearRampToValueAtTime(0.0001, t + seconds + 0.4);
+    n.connect(bp).connect(g).connect(this.sfx);
+    n.start(t);
+    n.stop(t + seconds + 0.5);
+  }
+
+  /** Procedural "voice over a tannoy": formant-filtered pulses in syllables. */
+  private babble(seconds: number): void {
+    const ctx = this.ctx!, t0 = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    osc.type = 'sawtooth';
+    osc.frequency.value = 125;
+    const f1 = ctx.createBiquadFilter();
+    f1.type = 'bandpass';
+    f1.Q.value = 6;
+    const f2 = ctx.createBiquadFilter();
+    f2.type = 'bandpass';
+    f2.Q.value = 8;
+    const radio = ctx.createBiquadFilter();
+    radio.type = 'highpass';
+    radio.frequency.value = 350;
+    const g = ctx.createGain();
+    g.gain.value = 0;
+    osc.connect(f1).connect(radio);
+    osc.connect(f2).connect(radio);
+    radio.connect(g).connect(this.sfx);
+    let t = t0;
+    while (t < t0 + seconds) {
+      const len = 0.09 + Math.random() * 0.14;
+      f1.frequency.setValueAtTime(300 + Math.random() * 500, t);
+      f2.frequency.setValueAtTime(900 + Math.random() * 1500, t);
+      osc.frequency.setValueAtTime(110 + Math.random() * 40, t);
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.linearRampToValueAtTime(0.09, t + 0.02);
+      g.gain.linearRampToValueAtTime(0.0001, t + len);
+      t += len + (Math.random() < 0.15 ? 0.25 : 0.03);
+    }
+    osc.start(t0);
+    osc.stop(t + 0.1);
   }
 
   private startAmbient(): void {
@@ -321,6 +545,39 @@ export class AudioEngine {
     lfo.start();
     crowd.connect(bp).connect(cg).connect(this.ambient);
     crowd.start();
+    // Chatter: three formant bands, each with its own syllable rhythm.
+    this.crowdGain = ctx.createGain();
+    this.crowdGain.gain.value = 0.6;
+    this.crowdGain.connect(this.ambient);
+    this.crowdGain.connect(this.reverbSend);
+    for (const [f, q, rate] of [[420, 3, 4.2], [1150, 4, 5.1], [2400, 5, 3.6]] as const) {
+      const src = this.noiseSrc();
+      const filt = ctx.createBiquadFilter();
+      filt.type = 'bandpass';
+      filt.frequency.value = f;
+      filt.Q.value = q;
+      const g = ctx.createGain();
+      g.gain.value = 0.03;
+      src.connect(filt).connect(g).connect(this.crowdGain);
+      src.start();
+      this.crowdLayers.push({ gain: g, rate, phase: Math.random() * 6 });
+    }
+    // Platform wind: airy high band, louder out by the tracks.
+    const wind = this.noiseSrc();
+    const wf = ctx.createBiquadFilter();
+    wf.type = 'bandpass';
+    wf.frequency.value = 900;
+    wf.Q.value = 0.4;
+    this.windGain = ctx.createGain();
+    this.windGain.gain.value = 0.03;
+    const wl = ctx.createOscillator();
+    wl.frequency.value = 0.09;
+    const wlg = ctx.createGain();
+    wlg.gain.value = 400;
+    wl.connect(wlg).connect(wf.frequency);
+    wl.start();
+    wind.connect(wf).connect(this.windGain).connect(this.ambient);
+    wind.start();
     this.ambient.gain.setTargetAtTime(1, ctx.currentTime, 1.5);
   }
 }

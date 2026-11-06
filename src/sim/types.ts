@@ -4,19 +4,35 @@ export type AgentKind = 'civilian' | 'spy';
 export type Pose = 'stand' | 'sit' | 'dead';
 export type MoveMode = 'walk' | 'run' | 'crouch';
 
+export type BagKind = 'none' | 'briefcase' | 'shoulder' | 'backpack';
+/** 0 short, 1 long, 2 tied back, 3 shaved. */
+export type HairStyle = 0 | 1 | 2 | 3;
+
 export interface Appearance {
   coat: number;
+  pants: number;
   tie: number;
   /** Index into TIE_NAMES (spies' dossier); -1 for no tie. */
   tieName: number;
   hat: boolean;
   hatColor: number;
   glasses: boolean;
-  briefcase: boolean;
+  hair: number;
+  /** Index into HAIR_NAMES. */
+  hairName: number;
+  hairStyle: HairStyle;
+  bag: BagKind;
+  scarf: boolean;
+  skirt: boolean;
+  longCoat: boolean;
+  /** 0 slim .. 1 broad. */
+  build: number;
   /** 0..1 skin tone blend. */
   skin: number;
   /** Small per-person height scale. */
   scale: number;
+  /** Per-person random for animation variety. */
+  seed: number;
 }
 
 /** What a spy wants to do this tick. Produced by input (player) or a brain (bot). */

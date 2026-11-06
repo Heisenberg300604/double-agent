@@ -1,56 +1,70 @@
-// Builds the static level: all boxes/cylinders merged into one mesh per
-// material (< 30 draw calls for the whole station).
+// Builds the static level. Every authored box/cylinder/sphere is merged into
+// one mesh per material *group*: colours live in vertex colours (with baked
+// ambient occlusion), so dozens of material ids cost ~13 draw calls in total.
 
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import type { Box, MapLayout, MatId } from '../world/mapData';
-import { boardTexture, clockTexture, concreteTexture, corridorTexture, floorTexture, wallTexture } from './textures';
+import {
+  LiveBoard, LiveClock, LiveLed, concreteTexture, corridorTexture, floorTexture, signAtlasTexture, signUV, wallTexture,
+  type SignName,
+} from './textures';
+
+type Group = 'solid' | 'panel' | 'shiny' | 'paint' | 'glow' | 'floor' | 'floorCorridor' | 'platform' | 'board' | 'clock' | 'signs' | 'led';
+
+/** Material id → render group + base colour (sRGB). */
+const MATS: Record<Exclude<MatId, 'invisible'>, [Group, number]> = {
+  floor: ['floor', 0xffffff],
+  floorCorridor: ['floorCorridor', 0xffffff],
+  platform: ['platform', 0xffffff],
+  track: ['solid', 0x121315],
+  wall: ['panel', 0x4a433b],
+  wallGreen: ['panel', 0x2f4d40],
+  wallLow: ['panel', 0x2a4436],
+  plaster: ['solid', 0x8a8070],
+  ceiling: ['solid', 0x221f1c],
+  wood: ['solid', 0x5c4330],
+  woodDark: ['solid', 0x3a271a],
+  brass: ['shiny', 0xb8914c],
+  metal: ['shiny', 0x4a5058],
+  chrome: ['shiny', 0x9aa1a8],
+  stone: ['solid', 0x6e685f],
+  lamp: ['glow', 0xffdba6],
+  lampBlue: ['glow', 0xb4d0ff],
+  bulb: ['glow', 0xfff0d0],
+  glass: ['glow', 0x1d2c36],
+  glassWarm: ['glow', 0x8a6236],
+  window: ['glow', 0x2a3a52],
+  train: ['paint', 0x24384f],
+  trainBody: ['paint', 0x24384f],
+  trainCream: ['paint', 0xc9bb98],
+  trainRoof: ['solid', 0x3c4046],
+  trainDark: ['solid', 0x15181d],
+  rubber: ['solid', 0x0e0e10],
+  leather: ['solid', 0x4a2c1c],
+  board: ['board', 0xffffff],
+  clock: ['clock', 0xffffff],
+  signs: ['signs', 0xffffff],
+  led: ['led', 0xffffff],
+  shop: ['solid', 0x6a5236],
+  yellow: ['solid', 0xb08f26],
+  plant: ['solid', 0x2c5232],
+  fabric: ['solid', 0x523634],
+  paper: ['solid', 0xc8c2b0],
+};
 
 /** Texture world-space tiling size (metres per repeat). */
 const TILE: Partial<Record<MatId, number>> = {
-  floor: 4,
-  floorCorridor: 3,
-  platform: 3,
-  wall: 3,
-  wallGreen: 3,
-  wallLow: 2,
+  floor: 4, floorCorridor: 3, platform: 3, wall: 3, wallGreen: 3, wallLow: 2,
 };
 
-function makeMaterials(): Record<Exclude<MatId, 'invisible'>, THREE.Material> {
-  const floor = floorTexture();
-  const corridor = corridorTexture();
-  const concrete = concreteTexture();
-  const panel = wallTexture();
-  const L = (color: number, opts: THREE.MeshLambertMaterialParameters = {}): THREE.MeshLambertMaterial =>
-    new THREE.MeshLambertMaterial({ color, vertexColors: true, ...opts });
-  const P = (color: number, shininess: number, opts: THREE.MeshPhongMaterialParameters = {}): THREE.MeshPhongMaterial =>
-    new THREE.MeshPhongMaterial({ color, shininess, vertexColors: true, ...opts });
-  return {
-    floor: P(0xffffff, 40, { map: floor, specular: 0x222018 }),
-    floorCorridor: L(0xffffff, { map: corridor }),
-    platform: L(0xffffff, { map: concrete }),
-    track: L(0x111214),
-    wall: L(0x3a3530, { map: panel }),
-    wallGreen: L(0x2c4a3d, { map: panel }),
-    wallLow: L(0x284034, { map: panel }),
-    ceiling: L(0x1d1b19),
-    wood: L(0x5a4430),
-    woodDark: L(0x3e2818),
-    brass: P(0x9a7b45, 60, { specular: 0x705a30, emissive: 0x0d0904 }),
-    metal: P(0x40454c, 30, { specular: 0x333333 }),
-    stone: L(0x6a655e),
-    lamp: new THREE.MeshBasicMaterial({ color: 0xffd9a0, fog: true }),
-    lampBlue: new THREE.MeshBasicMaterial({ color: 0xa8ccff, fog: true }),
-    glass: L(0x22323c, { emissive: 0x1a2c38 }),
-    train: P(0x2c3d52, 50, { specular: 0x333a44 }),
-    trainDark: L(0x161a20),
-    board: new THREE.MeshBasicMaterial({ map: boardTexture() }),
-    clock: new THREE.MeshBasicMaterial({ map: clockTexture() }),
-    shop: L(0x4a3a2a, { emissive: 0x3a2610 }),
-    yellow: L(0xa88a22),
-    plant: L(0x2a4a2e),
-    fabric: L(0x4a3030),
-  };
+export interface MapVisuals {
+  group: THREE.Group;
+  /** Materials that should receive the environment map. */
+  envMaterials: THREE.MeshStandardMaterial[];
+  board: LiveBoard;
+  clock: LiveClock;
+  led: LiveLed;
 }
 
 const tmpColor = new THREE.Color();
@@ -59,7 +73,13 @@ function geometryFor(b: Box): THREE.BufferGeometry {
   const w = b.maxX - b.minX, h = b.maxY - b.minY, d = b.maxZ - b.minZ;
   let g: THREE.BufferGeometry;
   if (b.shape === 'cyl') {
-    g = new THREE.CylinderGeometry(w / 2, w / 2, h, 14, 1);
+    g = new THREE.CylinderGeometry(0.5, 0.5, 1, 16, 1).scale(w, h, d);
+  } else if (b.shape === 'cylX') {
+    g = new THREE.CylinderGeometry(0.5, 0.5, 1, 18, 1).rotateZ(Math.PI / 2).scale(w, h, d);
+  } else if (b.shape === 'cylZ') {
+    g = new THREE.CylinderGeometry(0.5, 0.5, 1, 14, 1).rotateX(Math.PI / 2).scale(w, h, d);
+  } else if (b.shape === 'sph') {
+    g = new THREE.SphereGeometry(0.5, 12, 8).scale(w, h, d);
   } else {
     g = new THREE.BoxGeometry(w, h, d);
   }
@@ -69,7 +89,11 @@ function geometryFor(b: Box): THREE.BufferGeometry {
   const pos = g.getAttribute('position') as THREE.BufferAttribute;
   const nrm = g.getAttribute('normal') as THREE.BufferAttribute;
   const uv = g.getAttribute('uv') as THREE.BufferAttribute;
-  const tile = TILE[b.mat];
+  const mat = b.mat as Exclude<MatId, 'invisible'>;
+  const tile = TILE[mat];
+  const sign = b.sign ? signUV(b.sign as SignName) : null;
+  const [grp, base] = MATS[mat];
+  const baseColor = new THREE.Color().setHex(base);
   const colors = new Float32Array(pos.count * 3);
   for (let i = 0; i < pos.count; i++) {
     const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
@@ -78,12 +102,14 @@ function geometryFor(b: Box): THREE.BufferGeometry {
       if (ny > 0.5) uv.setXY(i, x / tile, z / tile);
       else if (nx > 0.5) uv.setXY(i, z / tile, y / tile);
       else uv.setXY(i, x / tile, y / tile);
+    } else if (sign) {
+      uv.setXY(i, sign[0] + uv.getX(i) * (sign[2] - sign[0]), sign[1] + uv.getY(i) * (sign[3] - sign[1]));
     }
-    // Cheap baked ambient occlusion: darker near the floor and under the ceiling.
-    let ao = 0.62 + 0.38 * Math.min(1, Math.max(0, y) / 2.5);
-    if (nrm.getY(i) < -0.5) ao *= 0.7;
-    if (b.mat === 'floor' || b.mat === 'floorCorridor' || b.mat === 'platform') ao = 1;
-    tmpColor.setScalar(ao);
+    // Baked ambient occlusion: darker near the floor and on undersides.
+    let ao = 0.6 + 0.4 * Math.min(1, Math.max(0, y) / 2.6);
+    if (nrm.getY(i) < -0.5) ao *= 0.65;
+    if (grp === 'floor' || grp === 'floorCorridor' || grp === 'platform' || grp === 'glow') ao = 1;
+    tmpColor.copy(baseColor).multiplyScalar(ao);
     colors[i * 3] = tmpColor.r;
     colors[i * 3 + 1] = tmpColor.g;
     colors[i * 3 + 2] = tmpColor.b;
@@ -92,25 +118,76 @@ function geometryFor(b: Box): THREE.BufferGeometry {
   return g;
 }
 
-export function buildMapMeshes(layout: MapLayout): THREE.Group {
-  const mats = makeMaterials();
-  const byMat = new Map<Exclude<MatId, 'invisible'>, THREE.BufferGeometry[]>();
+export function buildMapMeshes(layout: MapLayout): MapVisuals {
+  const board = new LiveBoard();
+  const clock = new LiveClock();
+  const led = new LiveLed();
+  const floorMat = new THREE.MeshStandardMaterial({ map: floorTexture(), roughness: 0.38, metalness: 0, envMapIntensity: 0.8 });
+  const shiny = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.48, metalness: 0.7, envMapIntensity: 1.0 });
+  const paint = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.28, metalness: 0.25, envMapIntensity: 1.1 });
+  const mats: Record<Group, THREE.Material> = {
+    solid: new THREE.MeshLambertMaterial({ vertexColors: true }),
+    panel: new THREE.MeshLambertMaterial({ vertexColors: true, map: wallTexture() }),
+    shiny,
+    paint,
+    glow: new THREE.MeshBasicMaterial({ vertexColors: true }),
+    floor: floorMat,
+    floorCorridor: new THREE.MeshLambertMaterial({ map: corridorTexture() }),
+    platform: new THREE.MeshLambertMaterial({ map: concreteTexture() }),
+    board: new THREE.MeshBasicMaterial({ map: board.texture }),
+    clock: new THREE.MeshBasicMaterial({ map: clock.texture }),
+    signs: new THREE.MeshBasicMaterial({ map: signAtlasTexture() }),
+    led: new THREE.MeshBasicMaterial({ map: led.texture }),
+  };
+  const byGroup = new Map<Group, THREE.BufferGeometry[]>();
   for (const b of layout.boxes) {
     if (b.mat === 'invisible') continue;
-    const list = byMat.get(b.mat) ?? [];
+    const grp = MATS[b.mat][0];
+    const list = byGroup.get(grp) ?? [];
     list.push(geometryFor(b));
-    byMat.set(b.mat, list);
+    byGroup.set(grp, list);
   }
   const group = new THREE.Group();
-  for (const [mat, geos] of byMat) {
+  for (const [grp, geos] of byGroup) {
     const merged = mergeGeometries(geos, false);
-    if (!merged) continue;
+    if (!merged) {
+      console.warn(`[map] could not merge group ${grp}`);
+      continue;
+    }
     merged.computeBoundingSphere();
-    const mesh = new THREE.Mesh(merged, mats[mat]);
-    mesh.name = `map:${mat}`;
+    const mesh = new THREE.Mesh(merged, mats[grp]);
+    mesh.name = `map:${grp}`;
     mesh.matrixAutoUpdate = false;
     group.add(mesh);
     for (const g of geos) g.dispose();
   }
-  return group;
+  return { group, envMaterials: [floorMat, shiny, paint], board, clock, led };
+}
+
+/**
+ * A tiny procedural "station" environment for reflections: dark walls,
+ * warm lamp strips overhead and a cool glow from the platform end.
+ */
+export function buildEnvironment(renderer: THREE.WebGLRenderer): THREE.Texture {
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x15130f);
+  const room = new THREE.Mesh(new THREE.BoxGeometry(40, 16, 40), new THREE.MeshBasicMaterial({ color: 0x1c1813, side: THREE.BackSide }));
+  room.position.y = 6;
+  scene.add(room);
+  const strip = (x: number, y: number, z: number, w: number, d: number, color: number): void => {
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(w, d), new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide }));
+    m.rotation.x = Math.PI / 2;
+    m.position.set(x, y, z);
+    scene.add(m);
+  };
+  for (let x = -15; x <= 15; x += 10) strip(x, 13.5, 0, 4, 18, 0xf2d7aa);
+  for (const [x, z] of [[-8, -6], [6, 6], [-4, 8], [10, -8]]) strip(x, 8, z, 1.4, 1.4, 0xffc27a);
+  const blue = new THREE.Mesh(new THREE.PlaneGeometry(16, 8), new THREE.MeshBasicMaterial({ color: 0x5c7fb8 }));
+  blue.rotation.y = -Math.PI / 2;
+  blue.position.set(19.5, 5, 0);
+  scene.add(blue);
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  const env = pmrem.fromScene(scene, 0.04).texture;
+  pmrem.dispose();
+  return env;
 }

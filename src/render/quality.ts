@@ -9,6 +9,9 @@ export class QualityScaler {
   private sampleTime = 0;
   private highTime = 0;
   private cooldown = 0;
+  /** Seconds of headroom needed before raising quality; grows when a raise didn't stick. */
+  private raiseAfter: number = CONFIG.quality.raiseAfter;
+  private sinceRaise = Infinity;
   readonly scales: readonly number[] = CONFIG.quality.scales;
 
   get scale(): number {
@@ -22,17 +25,21 @@ export class QualityScaler {
     this.sampleTime += frameSeconds;
     while (this.sampleTime > Q.window && this.samples.length > 1) this.sampleTime -= this.samples.shift()!;
     this.cooldown -= frameSeconds;
+    this.sinceRaise += frameSeconds;
     if (this.sampleTime < Q.window * 0.9 || this.cooldown > 0) return false;
     const fps = this.samples.length / this.sampleTime;
     if (fps < Q.lowFps && this.step < this.scales.length - 1) {
+      // Dropping right after a raise means we're oscillating: wait much longer next time.
+      if (this.sinceRaise < 15) this.raiseAfter = Math.min(60, this.raiseAfter * 3);
       this.step++;
       this.reset();
       return true;
     }
     if (fps > Q.highFps) {
       this.highTime += frameSeconds;
-      if (this.highTime > Q.raiseAfter && this.step > 0) {
+      if (this.highTime > this.raiseAfter && this.step > 0) {
         this.step--;
+        this.sinceRaise = 0;
         this.reset();
         return true;
       }

@@ -10,7 +10,7 @@ const tiny: MapLayout = {
     { minX: -9, maxX: -7, minY: 2.5, maxY: 2.8, minZ: -1, maxZ: 1, mat: 'wood', collide: true, shape: 'box' },
   ],
   ramps: [{ minX: 4, maxX: 8, minZ: 4, maxZ: 6, axis: 'x', y0: 0, y1: 2 }],
-  pois: [], spawns: [], navRegions: [], navExtra: [], lights: [],
+  pois: [], spawns: [], navRegions: [], navExtra: [], lights: [], glows: [], pools: [], shafts: [], doors: [],
 };
 
 describe('collision', () => {

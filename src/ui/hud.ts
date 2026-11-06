@@ -20,6 +20,7 @@ export interface HudState {
   reloading: boolean;
   drawn: boolean;
   aiming: boolean;
+  moveSpeed: number;
   gadgets: [GadgetView, GadgetView, GadgetView];
   dossierName: string;
   dossierLines: string[];
@@ -50,6 +51,10 @@ export class Hud {
   private readonly hpNum = $('#hp-num');
   private readonly ammo = $('#ammo');
   private readonly cross = $('#crosshair');
+  private readonly ticks = ['t', 'b', 'l', 'r'].map((k) => $(`#crosshair .${k}`));
+  private spread = 10;
+  private kickAmt = 0;
+  private killT = 0;
   private readonly dot = $('#dot');
   private readonly hit = $('#hitmarker');
   private readonly feed = $('#killfeed');
@@ -82,6 +87,22 @@ export class Hud {
   private readonly feedPool: HTMLElement[] = [];
 
   constructor() {
+    // Film grain: a small procedural noise tile, animated by CSS.
+    try {
+      const c = document.createElement('canvas');
+      c.width = c.height = 160;
+      const g = c.getContext('2d')!;
+      const img = g.createImageData(160, 160);
+      for (let i = 0; i < img.data.length; i += 4) {
+        const v = Math.random() * 255;
+        img.data[i] = img.data[i + 1] = img.data[i + 2] = v;
+        img.data[i + 3] = 255;
+      }
+      g.putImageData(img, 0, 0);
+      $('#fx-grain').style.backgroundImage = `url(${c.toDataURL()})`;
+    } catch {
+      /* grain is cosmetic */
+    }
     for (let i = 0; i < 4; i++) {
       const d = document.createElement('div');
       d.className = 'dmg';
@@ -134,6 +155,20 @@ export class Hud {
     if (this.changed('drawn', s.drawn)) {
       this.cross.classList.toggle('hidden', !s.drawn);
       this.dot.classList.toggle('hidden', s.drawn);
+    }
+    if (s.drawn) {
+      // Dynamic spread: movement and recoil open it, aiming tightens it.
+      this.kickAmt = Math.max(0, this.kickAmt - dt * 5);
+      this.killT = Math.max(0, this.killT - dt);
+      const target = (s.aiming ? 4 : 9) + Math.min(14, s.moveSpeed * 2.2) + this.kickAmt * 14;
+      this.spread += (target - this.spread) * Math.min(1, dt * 14);
+      const g = this.spread.toFixed(1);
+      this.ticks[0].style.transform = `translate(-50%, calc(-100% - ${g}px))`;
+      this.ticks[1].style.transform = `translate(-50%, ${g}px)`;
+      this.ticks[2].style.transform = `translate(calc(-100% - ${g}px), -50%)`;
+      this.ticks[3].style.transform = `translate(${g}px, -50%)`;
+      if (this.changed('aimX', s.aiming)) this.cross.classList.toggle('aim', s.aiming);
+      if (this.changed('killX', this.killT > 0)) this.cross.classList.toggle('kill', this.killT > 0);
     }
 
     s.gadgets.forEach((g, i) => {
@@ -188,6 +223,14 @@ export class Hud {
     }
   }
 
+  crosshairKick(): void {
+    this.kickAmt = 1;
+  }
+
+  killConfirm(): void {
+    this.killT = 0.6;
+  }
+
   hitmarker(headshot: boolean): void {
     this.hitTimer = 0.25;
     this.hit.classList.toggle('head', headshot);
@@ -196,6 +239,10 @@ export class Hud {
 
   /** angle: radians, 0 = straight ahead, positive = to the left. */
   damageFrom(angle: number): void {
+    const hurt = $('#fx-hurt');
+    hurt.classList.add('on');
+    void hurt.offsetWidth;
+    hurt.classList.remove('on');
     let idx = 0;
     for (let i = 1; i < this.dmgLife.length; i++) if (this.dmgLife[i] < this.dmgLife[idx]) idx = i;
     this.dmgLife[idx] = 1.2;

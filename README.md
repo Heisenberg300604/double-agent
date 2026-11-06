@@ -90,8 +90,11 @@ src/
   - **Civilians** wander between points of interest (kiosks, benches, café seats, the info board, platform edges, chat circles), linger there, and panic away from gunshots and bodies.
   - **Spies** keep a belief weight for each agent they observe. Weights come from scanner pulses, visible suspicion (the red outline), hearing, and watching their target up close. Confidence above 0.7 within 25 m moves a spy from Search to Stalk and then Strike. Each bot has its own reaction time and accuracy, and they sometimes shoot the wrong person.
 - **Rendering performance.**
-  - Every human is drawn in a single instanced draw call. Walking, sitting, crouching, aiming and death poses are animated in the vertex shader.
-  - The static level is merged by material into about 20 meshes.
+  - Every human is drawn in a single instanced draw call. A jointed rig (hips, knees, shoulders, elbows, neck, waist) runs in the vertex shader: walking and running, sitting, crouching, aiming, death, and idle activities (talking, reading a newspaper, phoning, waiting) with breathing and glances.
+  - The static level is merged into about 13 meshes by material *group*, with colours and baked ambient occlusion in vertex colours. The floor, brass and train paint reflect a small procedural environment map.
+  - The departure board, station clocks and platform LED displays are live canvas textures.
+  - Atmosphere effects (lamp halos, light pools, light shafts from the high windows, drifting dust) are one draw call each.
+  - Train doors open on announcements.
   - Lighting uses no shadow maps: blob shadows go under each character, plus 3 point lights and fog.
   - Effects are pooled buffers, one draw call each.
   - The auto-quality scaler lowers the render scale (1.0 → 0.85 → 0.7) when the 2 s average FPS drops below 50, and raises it again after 5 s above 58.
@@ -106,9 +109,9 @@ These numbers come from Chrome on Apple-silicon macOS:
 | Frame rate | Locked to 60 FPS (vsync) |
 | Simulation time | ≈0.5 ms per frame |
 | Render CPU time | ≈1 ms per frame |
-| Draw calls | 15–28 |
-| Triangles | ≈22k |
-| Bundle size | 160 KB gzipped |
+| Draw calls | 18–30 |
+| Triangles | ≈90k |
+| Bundle size | 177 KB gzipped |
 | Time to title screen | ≈0.3 s (production build) |
 | Full 8-minute headless match (bots only) | ≈1.3 s |
 
@@ -119,3 +122,4 @@ These numbers come from Chrome on Apple-silicon macOS:
 | `npm run sim -- <seed>` | Runs one bot-only match headless and prints kills, AI state time and scores. |
 | `npm run balance` | Measures how long a passive player survives across 6 seeds. |
 | `npx vite-node scripts/navcheck.ts` | Prints nav-graph statistics. |
+| `npx vite-node scripts/zfight.ts` | Lists coplanar overlapping faces (z-fighting candidates) in the map. |

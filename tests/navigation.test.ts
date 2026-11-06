@@ -38,7 +38,7 @@ describe('waypoint graph + A*', () => {
     const tiny: MapLayout = {
       bounds: { minX: -10, maxX: 10, minZ: -10, maxZ: 10 },
       boxes: [{ minX: -1, maxX: 1, minY: 0, maxY: 3, minZ: -9.9, maxZ: 6, mat: 'wall', collide: true, shape: 'box' }],
-      ramps: [], pois: [], spawns: [], lights: [],
+      ramps: [], pois: [], spawns: [], lights: [], glows: [], pools: [], shafts: [], doors: [],
       navRegions: [],
       navExtra: [
         { x: -3, y: 0, z: 0 }, { x: -3, y: 0, z: 4 }, { x: -3, y: 0, z: 8 }, { x: 0, y: 0, z: 8.5 },

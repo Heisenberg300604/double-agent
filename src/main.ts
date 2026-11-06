@@ -1,5 +1,6 @@
 // Boot + game loop: fixed 60 Hz simulation with interpolated rendering.
 
+import { inject } from '@vercel/analytics';
 import { CONFIG } from './config';
 import { Input } from './core/input';
 import { FixedStep } from './core/loop';
@@ -48,6 +49,11 @@ class Game {
   private hints = new Set<string>();
   private matchTime = 0;
   private remoteStepTimer = 0;
+  /** Station life: announcements, door cycles (pause-aware timers). */
+  private announceTimer = 22;
+  private announceIdx = 0;
+  private readonly timers: { t: number; fn: () => void }[] = [];
+  private surroundTimer = 0;
 
   constructor() {
     this.settings = loadSettings();
@@ -140,6 +146,7 @@ class Game {
   private pause(): void {
     if (this.state !== 'playing') return;
     this.state = 'paused';
+    this.audio.stopSpeech();
     this.input.exitLock();
     this.menus.show('pause');
     this.hud.setScoreboard(false);
@@ -157,6 +164,8 @@ class Game {
 
   private toTitle(): void {
     this.state = 'title';
+    this.audio.stopSpeech();
+    this.timers.length = 0;
     this.input.exitLock();
     this.hud.show(false);
     this.world = this.makeWorld(false);
@@ -211,7 +220,60 @@ class Game {
     }
     this.simMs += (performance.now() - t0 - this.simMs) * 0.05;
 
+    if (this.state === 'playing' || this.state === 'title') this.stationLife(dt);
     this.renderFrame(dt);
+  }
+
+  private later(t: number, fn: () => void): void {
+    this.timers.push({ t, fn });
+  }
+
+  /** Periodic announcements with matching train door cycles, plus ambience levels. */
+  private stationLife(dt: number): void {
+    for (let i = this.timers.length - 1; i >= 0; i--) {
+      this.timers[i].t -= dt;
+      if (this.timers[i].t <= 0) {
+        const fn = this.timers[i].fn;
+        this.timers.splice(i, 1);
+        fn();
+      }
+    }
+    this.surroundTimer -= dt;
+    if (this.surroundTimer <= 0) {
+      this.surroundTimer = 0.5;
+      let near = 0;
+      for (const a of this.world.agents) {
+        if (a.alive && Math.abs(a.x - this.cam.x) + Math.abs(a.z - this.cam.z) < 9) near++;
+      }
+      this.audio.setSurroundings(Math.min(1, near / 12), Math.max(0, Math.min(1, (this.cam.x - 20) / 6)));
+    }
+    if (this.state !== 'playing') return;
+    this.announceTimer -= dt;
+    if (this.announceTimer > 0) return;
+    this.announceTimer = 70 + Math.random() * 25;
+    const mins = this.renderer.stationMinutes;
+    const next = Math.floor(mins / 7) * 7 + 7;
+    const hh = Math.floor(next / 60) % 24, mm = next % 60;
+    const time = `${hh} ${mm < 10 ? `oh ${mm}` : mm}`;
+    const dests = ['Northgate', 'Halvern Bay', 'Castlemere', 'Orrin Fields', 'Saltworth', 'Kings Vale', 'Ashcombe', 'Mirelow', 'Brandish Cross', 'Westerly'];
+    const dest = dests[Math.floor(next / 7) % dests.length];
+    const train = this.announceIdx % 2;
+    const platform = train === 0 ? 1 : 3;
+    const lines = [
+      `Platform ${platform} for the ${time} service to ${dest}. This train is now ready to board.`,
+      'Passengers are reminded to keep their luggage with them at all times. Unattended items may be removed.',
+      `The ${time} to ${dest}, calling at all stations, will depart from platform ${platform}. Please stand clear of the doors.`,
+      'Would all passengers please take care on the stairs to the gallery.',
+    ];
+    const text = lines[this.announceIdx % lines.length];
+    this.announceIdx++;
+    this.audio.announce(text);
+    if (this.announceIdx % 2 === 1 || text.includes('Platform') || text.includes('platform')) {
+      const doors = this.renderer.atmosphere.doors;
+      const z = train === 0 ? 13 : -13;
+      this.later(6, () => doors.cycle(train, 12));
+      this.later(6 + 1.4 + 12 - 2, () => this.audio.doorBeeps({ x: 31, y: 2, z }));
+    }
   }
 
   private updateLook(): void {
@@ -220,6 +282,7 @@ class Game {
     if (!p.alive) return;
     const zoom = p.spy!.aiming ? CONFIG.weapon.fovAim / this.settings.fov : 1;
     const k = 0.0022 * this.settings.sensitivity * zoom;
+    this.renderer.viewmodel.addLook(this.mouse.x, this.mouse.y);
     this.yaw = wrapAngle(this.yaw - this.mouse.x * k);
     this.pitch = Math.max(-1.45, Math.min(1.45, this.pitch - this.mouse.y * k));
   }
@@ -265,6 +328,7 @@ class Game {
           this.audio.shot(own ? undefined : { x: sh.x, y: sh.y + 1.5, z: sh.z }, own);
           if (own) {
             this.renderer.viewmodel.kick();
+            this.hud.crosshairKick();
             this.pitch = Math.min(1.45, this.pitch + 0.012);
             if (e.hitAgent >= 0) {
               this.hud.hitmarker(e.headshot);
@@ -336,11 +400,13 @@ class Game {
           const extra = [e.headshot ? 'headshot' : '', e.unseen ? 'unseen' : ''].filter(Boolean).join(', ');
           this.hud.killfeed(`You eliminated your target (${pts(e.points)})${extra ? ` — ${extra}` : ''}`, 'good');
           this.hud.centerMessage('Target eliminated');
+          this.hud.killConfirm();
           this.audio.killSting(true);
           break;
         }
         case 'hunter':
           this.hud.killfeed(`You eliminated your hunter (${pts(e.points)})`, 'good');
+          this.hud.killConfirm();
           this.audio.killSting(true);
           break;
         case 'other':
@@ -422,8 +488,9 @@ class Game {
       outlined, revealed,
       aiming: playing && !!sp?.aiming,
       drawn: playing && !!sp?.drawn,
-      reloading: playing && (sp?.reloadTimer ?? 0) > 0,
+      reloadProgress: playing && sp && sp.reloadTimer > 0 ? 1 - sp.reloadTimer / CONFIG.weapon.reloadTime : -1,
       moveSpeed: me?.speed ?? 0,
+      running: playing && !!sp?.running,
       showViewmodel: playing,
     });
     this.renderMs += (performance.now() - r0 - this.renderMs) * 0.05;
@@ -512,6 +579,7 @@ class Game {
       reloading: s.reloadTimer > 0,
       drawn: me.alive && s.drawn,
       aiming: s.aiming,
+      moveSpeed: me.speed,
       gadgets: [
         { cooldown: s.cdScanner, max: G.scanner.cooldown, active: s.scanTimer > 0 },
         { cooldown: s.cdDisguise, max: G.disguise.cooldown, active: s.disguiseTimer > 0 },
@@ -531,6 +599,7 @@ class Game {
   }
 }
 
+inject();
 const game = new Game();
 // Exposed in dev builds only, for automated browser checks.
 if (import.meta.env.DEV) (window as unknown as { __game: Game }).__game = game;

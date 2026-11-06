@@ -5,7 +5,8 @@ import { CONFIG } from '../config';
 import type { World } from '../sim/world';
 import { CrowdRenderer } from './crowd';
 import { Effects } from './effects';
-import { buildMapMeshes } from './mapMesh';
+import { buildEnvironment, buildMapMeshes, type MapVisuals } from './mapMesh';
+import { Atmosphere } from './atmosphere';
 import { QualityScaler } from './quality';
 import { Viewmodel } from './viewmodel';
 
@@ -29,8 +30,10 @@ export interface FrameOptions {
   revealed: readonly { x: number; y: number; z: number }[];
   aiming: boolean;
   drawn: boolean;
-  reloading: boolean;
+  /** 0..1 while reloading, -1 otherwise. */
+  reloadProgress: number;
   moveSpeed: number;
+  running: boolean;
   showViewmodel: boolean;
 }
 
@@ -42,6 +45,11 @@ export class GameRenderer {
   readonly camera: THREE.PerspectiveCamera;
   readonly crowd: CrowdRenderer;
   readonly effects = new Effects();
+  readonly map: MapVisuals;
+  readonly atmosphere: Atmosphere;
+  private env: THREE.Texture | null = null;
+  /** Station clock: minutes since midnight. */
+  stationMinutes = 8 * 60 + 3;
   readonly viewmodel = new Viewmodel();
   readonly scaler = new QualityScaler();
   private readonly container: HTMLElement;
@@ -70,8 +78,11 @@ export class GameRenderer {
       this.scene.add(p);
     }
 
-    this.scene.add(buildMapMeshes(world.layout));
-    this.crowd = new CrowdRenderer(world.agents.length + 4);
+    this.map = buildMapMeshes(world.layout);
+    this.scene.add(this.map.group);
+    this.atmosphere = new Atmosphere(world.layout);
+    this.scene.add(this.atmosphere.group);
+    this.crowd = new CrowdRenderer(world.agents.length + 4, world.layout.pois);
     this.scene.add(this.crowd.shadows, this.crowd.mesh, this.crowd.outline);
     this.scene.add(this.effects.group);
 
@@ -93,6 +104,14 @@ export class GameRenderer {
     this.renderer.autoClear = false;
     this.renderer.info.autoReset = false;
     this.renderer.domElement.id = 'game-canvas';
+    // Reflections come from a tiny procedural environment rendered once per renderer.
+    this.env?.dispose();
+    this.env = buildEnvironment(this.renderer);
+    for (const m of this.map.envMaterials) {
+      m.envMap = this.env;
+      m.needsUpdate = true;
+    }
+    this.viewmodel.setEnvironment(this.env);
     if (old) {
       this.container.replaceChild(this.renderer.domElement, old.domElement);
       old.dispose();
@@ -154,9 +173,15 @@ export class GameRenderer {
     this.camera.position.set(cam.x, cam.y, cam.z);
     this.camera.rotation.set(cam.pitch, cam.yaw, cam.roll);
 
-    this.crowd.update(world.agents, o.alpha, o.hideId, o.outlined);
+    this.crowd.update(world.agents, o.alpha, o.hideId, o.outlined, performance.now() / 1000);
     this.effects.update(o.dt, world.smokes, o.revealed, this.camera.position);
-    this.viewmodel.update(o.dt, o.drawn && o.showViewmodel, o.aiming, o.reloading, o.moveSpeed, this.camera.aspect, this.fov * 0.85);
+    this.stationMinutes += o.dt / 60;
+    this.map.board.update(this.stationMinutes, o.dt);
+    this.map.clock.update(this.stationMinutes);
+    this.map.led.update(this.stationMinutes, o.dt);
+    const vh = this.renderer.domElement.height;
+    this.atmosphere.update(o.dt, performance.now() / 1000, vh, this.camera.fov, this.effects.particleScale);
+    this.viewmodel.update(o.dt, o.drawn && o.showViewmodel, o.aiming, o.reloadProgress, o.moveSpeed, o.running, this.camera.aspect, this.fov * 0.85);
 
     const r = this.renderer;
     r.info.reset();
