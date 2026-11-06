@@ -19,10 +19,8 @@ export class AudioEngine {
   private reverb!: ConvolverNode;
   private reverbSend!: GainNode;
   private crowdGain: GainNode | null = null;
-  private windGain: GainNode | null = null;
   private crowdLayers: { gain: GainNode; rate: number; phase: number }[] = [];
   private patterTimer = 0;
-  private rumbleTimer = 40;
   private density = 0.5;
   private platformness = 0;
   private time = 0;
@@ -89,7 +87,6 @@ export class AudioEngine {
     // Crowd chatter: formant bands with syllable-rate amplitude modulation.
     const crowdLevel = (0.35 + 0.65 * this.density) * (1 - 0.55 * this.platformness);
     if (this.crowdGain) this.crowdGain.gain.setTargetAtTime(crowdLevel, ctx.currentTime, 0.4);
-    if (this.windGain) this.windGain.gain.setTargetAtTime(0.03 + 0.12 * this.platformness, ctx.currentTime, 0.6);
     for (const l of this.crowdLayers) {
       l.phase += dt * l.rate * (0.7 + Math.random() * 0.6);
       const syll = Math.max(0, Math.sin(l.phase)) * (0.5 + 0.5 * Math.sin(l.phase * 0.13 + 1));
@@ -100,12 +97,6 @@ export class AudioEngine {
     if (this.patterTimer <= 0) {
       this.patterTimer = 0.12 + Math.random() * (0.6 - 0.45 * this.density);
       this.patter();
-    }
-    // Distant trains.
-    this.rumbleTimer -= dt;
-    if (this.rumbleTimer <= 0) {
-      this.rumbleTimer = 45 + Math.random() * 50;
-      this.distantTrain();
     }
   }
 
@@ -356,41 +347,80 @@ export class AudioEngine {
     n.stop(t + 0.08);
   }
 
-  private distantTrain(): void {
-    if (!this.ready) return;
-    const ctx = this.ctx!, t = ctx.currentTime;
-    // Low rumble swell.
+  /** Low rumble swell (used for trains moving in and out). */
+  private rumble(o: AudioNode, t: number, rise: number, hold: number, fall: number, peak: number): void {
+    const ctx = this.ctx!;
     const n = this.noiseSrc();
     const lp = ctx.createBiquadFilter();
     lp.type = 'lowpass';
-    lp.frequency.value = 140;
+    lp.frequency.value = 160;
     const g = ctx.createGain();
     g.gain.setValueAtTime(0.0001, t);
-    g.gain.linearRampToValueAtTime(0.35, t + 3);
-    g.gain.linearRampToValueAtTime(0.0001, t + 8);
-    n.connect(lp).connect(g).connect(this.sfx);
+    g.gain.linearRampToValueAtTime(peak, t + rise);
+    g.gain.setValueAtTime(peak, t + rise + hold);
+    g.gain.linearRampToValueAtTime(0.0001, t + rise + hold + fall);
+    n.connect(lp).connect(g).connect(o);
     n.start(t);
-    n.stop(t + 8.2);
-    // Far-off two-tone horn.
-    if (Math.random() < 0.6) {
-      for (const f of [311, 370]) {
-        const o = ctx.createOscillator();
-        o.type = 'sawtooth';
-        o.frequency.value = f;
-        const bp = ctx.createBiquadFilter();
-        bp.type = 'bandpass';
-        bp.frequency.value = 900;
-        bp.Q.value = 1.2;
-        const hg = ctx.createGain();
-        hg.gain.setValueAtTime(0.0001, t + 2);
-        hg.gain.linearRampToValueAtTime(0.022, t + 2.15);
-        hg.gain.setValueAtTime(0.022, t + 3.1);
-        hg.gain.linearRampToValueAtTime(0.0001, t + 3.5);
-        o.connect(bp).connect(hg).connect(this.sfx);
-        o.start(t + 2);
-        o.stop(t + 3.6);
-      }
+    n.stop(t + rise + hold + fall + 0.1);
+    // Rail joints: rhythmic clacks that slow down with the train.
+    const clacks = Math.floor((rise + hold) * 2.2);
+    for (let i = 0; i < clacks; i++) {
+      const ti = t + (i / clacks) * (rise + hold) * (0.6 + 0.4 * (i / clacks));
+      this.click(ti, 380, 0.18 * peak * 2, o);
     }
+  }
+
+  private horn(o: AudioNode, t: number, len: number): void {
+    const ctx = this.ctx!;
+    for (const f of [311, 370]) {
+      const osc = ctx.createOscillator();
+      osc.type = 'sawtooth';
+      osc.frequency.value = f;
+      const bp = ctx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.value = 900;
+      bp.Q.value = 1.2;
+      const hg = ctx.createGain();
+      hg.gain.setValueAtTime(0.0001, t);
+      hg.gain.linearRampToValueAtTime(0.05, t + 0.12);
+      hg.gain.setValueAtTime(0.05, t + len);
+      hg.gain.linearRampToValueAtTime(0.0001, t + len + 0.35);
+      osc.connect(bp).connect(hg).connect(o);
+      osc.start(t);
+      osc.stop(t + len + 0.4);
+    }
+  }
+
+  /** A train pulling in: rumble that fades as it brakes, then a brake squeal. */
+  trainArrive(pos: { x: number; y: number; z: number }, seconds: number): void {
+    const o = this.out(pos, 90, 1);
+    if (!o) return;
+    const ctx = this.ctx!, t = ctx.currentTime;
+    this.rumble(o, t, 2, seconds - 6, 4, 0.4);
+    const sq = ctx.createOscillator();
+    sq.type = 'sawtooth';
+    sq.frequency.setValueAtTime(2900, t + seconds - 4);
+    sq.frequency.linearRampToValueAtTime(2300, t + seconds);
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = 2600;
+    bp.Q.value = 9;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t + seconds - 4);
+    g.gain.linearRampToValueAtTime(0.03, t + seconds - 3);
+    g.gain.linearRampToValueAtTime(0.0001, t + seconds);
+    sq.connect(bp).connect(g).connect(o);
+    sq.start(t + seconds - 4);
+    sq.stop(t + seconds + 0.1);
+  }
+
+  /** A train leaving: horn, then a rumble that builds and fades into the distance. */
+  trainDepart(pos: { x: number; y: number; z: number }, seconds: number): void {
+    const o = this.out(pos, 90, 1);
+    if (!o) return;
+    const t = this.ctx!.currentTime;
+    this.horn(o, t, 0.9);
+    this.rumble(o, t + 1, 5, 4, seconds - 9, 0.35);
   }
 
   /** Door-closing warning beeps from a train. */
@@ -562,22 +592,7 @@ export class AudioEngine {
       src.start();
       this.crowdLayers.push({ gain: g, rate, phase: Math.random() * 6 });
     }
-    // Platform wind: airy high band, louder out by the tracks.
-    const wind = this.noiseSrc();
-    const wf = ctx.createBiquadFilter();
-    wf.type = 'bandpass';
-    wf.frequency.value = 900;
-    wf.Q.value = 0.4;
-    this.windGain = ctx.createGain();
-    this.windGain.gain.value = 0.03;
-    const wl = ctx.createOscillator();
-    wl.frequency.value = 0.09;
-    const wlg = ctx.createGain();
-    wlg.gain.value = 400;
-    wl.connect(wlg).connect(wf.frequency);
-    wl.start();
-    wind.connect(wf).connect(this.windGain).connect(this.ambient);
-    wind.start();
+
     this.ambient.gain.setTargetAtTime(1, ctx.currentTime, 1.5);
   }
 }

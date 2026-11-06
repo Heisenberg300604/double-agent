@@ -17,8 +17,9 @@ describe('waypoint graph + A*', () => {
   });
 
   it('finds a path from the café to the balcony that uses the stairs', () => {
-    const a = nav.nearestNode(-34, 0, -9);
-    const b = nav.nearestNode(-6, 5, 12);
+    const { cafe, balcony } = layout.landmarks;
+    const a = nav.nearestNode(cafe.x, cafe.y, cafe.z);
+    const b = nav.nearestNode(balcony.x, balcony.y, balcony.z);
     const path = nav.findPath(a, b)!;
     expect(path).not.toBeNull();
     expect(path[0]).toBe(a);
@@ -30,7 +31,7 @@ describe('waypoint graph + A*', () => {
   });
 
   it('every POI is reachable from every other region', () => {
-    const start = nav.nearestNode(0, 0, 0);
+    const start = nav.nearestNode(layout.landmarks.waitingRoom.x, 0, layout.landmarks.waitingRoom.z);
     for (const p of nav.pois) expect(nav.findPath(start, nav.poiNode[p.id])).not.toBeNull();
   });
 
@@ -38,7 +39,7 @@ describe('waypoint graph + A*', () => {
     const tiny: MapLayout = {
       bounds: { minX: -10, maxX: 10, minZ: -10, maxZ: 10 },
       boxes: [{ minX: -1, maxX: 1, minY: 0, maxY: 3, minZ: -9.9, maxZ: 6, mat: 'wall', collide: true, shape: 'box' }],
-      ramps: [], pois: [], spawns: [], lights: [], glows: [], pools: [], shafts: [], doors: [],
+      ramps: [], pois: [], spawns: [], lights: [], glows: [], pools: [], tracks: [], landmarks: {},
       navRegions: [],
       navExtra: [
         { x: -3, y: 0, z: 0 }, { x: -3, y: 0, z: 4 }, { x: -3, y: 0, z: 8 }, { x: 0, y: 0, z: 8.5 },

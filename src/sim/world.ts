@@ -20,6 +20,7 @@ import { canSee } from '../ai/perception';
 import { civilianThink, panic, standUp } from '../ai/civilianBrain';
 import { followPath, clearGoal } from '../ai/steering';
 import { SpyBrain } from '../ai/spyBrain';
+import { TrainSystem } from './trains';
 
 export const BOT_NAMES = ['Kestrel', 'Marlow', 'Juniper', 'Sable', 'Cobalt', 'Wren', 'Ashby', 'Fenwick', 'Linden', 'Hollis'];
 
@@ -47,6 +48,7 @@ export class World {
   readonly player: Agent | null;
   readonly brains = new Map<number, SpyBrain>();
   readonly smokes: Smoke[] = [];
+  readonly trains: TrainSystem;
   readonly noises: Noise[] = [];
   /** Events produced since the last drain. */
   events: SimEvent[] = [];
@@ -66,6 +68,8 @@ export class World {
     const b = this.layout.bounds;
     this.hash = new SpatialHash(b.minX, b.minZ, b.maxX, b.maxZ, 4);
     this.contracts = new Contracts(this.rng);
+    this.trains = new TrainSystem(this.layout.tracks, new Rng((opts.seed ?? CONFIG.seed) ^ 0x7a1b));
+    this.trains.writeColliders(this.col, this.layout.bounds.maxX);
     this.poiOccupant = new Int32Array(this.layout.pois.length).fill(-1);
     for (let i = 0; i < 8; i++) {
       this.smokes.push({ active: false, phase: 'flying', x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, timer: 0, radius: 0, owner: -1 });
@@ -124,7 +128,7 @@ export class World {
       animPhase: this.rng.range(0, 6.28), alive: true, health: CONFIG.health.max, deadTime: 0,
       appearance: look, baseAppearance: look,
       path: null, pathIndex: 0, goalX: 0, goalY: 0, goalZ: 0, hasGoal: false,
-      laneOffset: this.rng.range(-0.55, 0.55), stuckTimer: 0, progressX: x, progressZ: z,
+      laneOffset: this.rng.range(-0.55, 0.55), stuckTimer: 0, stuckCount: 0, progressX: x, progressZ: z,
       occupiedPoi: -1, spy: null, civ: null,
     };
     a.prevYaw = a.yaw;
@@ -452,6 +456,10 @@ export class World {
       a.pz = a.z;
       a.prevYaw = a.yaw;
     }
+
+    // Trains move first so sight lines and shots see the current cars.
+    this.trains.step(dt, (e) => this.emit(e));
+    this.trains.writeColliders(this.col, this.layout.bounds.maxX);
 
     // Spatial hash.
     this.hash.clear();

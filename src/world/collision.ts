@@ -7,6 +7,33 @@ import { CONFIG } from '../config';
 const CELL = 4;
 const STEP = CONFIG.body.stepHeight;
 
+let slabAxis = -1;
+let slabSign = 0;
+
+/** Ray vs AABB; returns entry distance or Infinity. Sets slabAxis/slabSign for the hit normal. */
+function rayAabb(ox: number, oy: number, oz: number, dx: number, dy: number, dz: number,
+  x0: number, y0: number, z0: number, x1: number, y1: number, z1: number, maxT: number): number {
+  let tmin = 0, tmax = maxT;
+  slabAxis = -1;
+  slabSign = 0;
+  for (let k = 0; k < 3; k++) {
+    const o = k === 0 ? ox : k === 1 ? oy : oz;
+    const d = k === 0 ? dx : k === 1 ? dy : dz;
+    const lo = k === 0 ? x0 : k === 1 ? y0 : z0;
+    const hi = k === 0 ? x1 : k === 1 ? y1 : z1;
+    if (Math.abs(d) < 1e-9) {
+      if (o < lo || o > hi) return Infinity;
+      continue;
+    }
+    let t1 = (lo - o) / d, t2 = (hi - o) / d, s = -1;
+    if (t1 > t2) { const tt = t1; t1 = t2; t2 = tt; s = 1; }
+    if (t1 > tmin) { tmin = t1; slabAxis = k; slabSign = s; }
+    if (t2 < tmax) tmax = t2;
+    if (tmin > tmax) return Infinity;
+  }
+  return tmin;
+}
+
 export interface RayHit {
   t: number;
   nx: number;
@@ -25,6 +52,8 @@ export class CollisionWorld {
   private readonly stamps: Uint32Array;
   private stampId = 1;
   private readonly tmpCells: number[] = [];
+  /** Moving solids (trains): block rays only. Updated by the simulation each tick. */
+  dynamic: { minX: number; minY: number; minZ: number; maxX: number; maxY: number; maxZ: number }[] = [];
 
   constructor(layout: MapLayout) {
     this.boxes = layout.boxes.filter((b) => b.collide);
@@ -223,6 +252,7 @@ export class CollisionWorld {
         if (this.stamps[bi] === stamp) continue;
         this.stamps[bi] = stamp;
         const b = this.boxes[bi];
+        if (b.rayIgnore) continue;
         // Slab test.
         let tmin = 0, tmax = best;
         let axis = -1, sign = 0;
@@ -276,6 +306,16 @@ export class CollisionWorld {
         tMaxZ += tDeltaZ;
       }
       if (cx < 0 || cx >= this.cols || cz < 0 || cz >= this.rows) break;
+    }
+    // Moving trains (few boxes, brute force, allocation-free).
+    for (const b of this.dynamic) {
+      const t = rayAabb(ox, oy, oz, dx, dy, dz, b.minX, b.minY, b.minZ, b.maxX, b.maxY, b.maxZ, best);
+      if (t < best) {
+        best = t;
+        nx = slabAxis === 0 ? slabSign : 0;
+        ny = slabAxis === 1 ? slabSign : 0;
+        nz = slabAxis === 2 ? slabSign : 0;
+      }
     }
     if (hit) {
       hit.t = best;

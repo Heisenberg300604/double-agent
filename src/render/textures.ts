@@ -144,13 +144,14 @@ export function wallTexture(): THREE.CanvasTexture {
 export const SIGNS = [
   'TICKETS', 'CAFÉ', 'NEWS & TOBACCO', 'BOOKSELLER', 'FLORIST', 'BAKERY', 'LEFT LUGGAGE', 'PLATFORMS  →',
   'WAY OUT', 'GRAND STATION', 'PLATFORM 1', 'PLATFORM 2', 'PLATFORM 3', 'WATCHMAKER', 'TELEGRAMS', 'CHEMIST',
+  'WAITING ROOM', 'RESTAURANT', 'LOCKERS', 'RESTROOMS', 'TAILOR', 'SWEETS', 'TOBACCONIST', 'NORTHGATE',
 ] as const;
 export type SignName = (typeof SIGNS)[number];
-const ATLAS_COLS = 2, ATLAS_ROWS = 8;
+const ATLAS_COLS = 3, ATLAS_ROWS = 8;
 
 /** UV rectangle [u0, v0, u1, v1] of a sign in the atlas. */
 export function signUV(name: SignName): [number, number, number, number] {
-  const i = SIGNS.indexOf(name);
+  const i = Math.max(0, SIGNS.indexOf(name));
   const col = i % ATLAS_COLS, row = Math.floor(i / ATLAS_COLS);
   const u0 = col / ATLAS_COLS, u1 = (col + 1) / ATLAS_COLS;
   const v1 = 1 - row / ATLAS_ROWS, v0 = 1 - (row + 1) / ATLAS_ROWS;
@@ -158,8 +159,8 @@ export function signUV(name: SignName): [number, number, number, number] {
 }
 
 export function signAtlasTexture(): THREE.CanvasTexture {
-  const [c, g] = canvas(1024, 512);
-  const cw = 1024 / ATLAS_COLS, ch = 512 / ATLAS_ROWS;
+  const [c, g] = canvas(1536, 512);
+  const cw = 1536 / ATLAS_COLS, ch = 512 / ATLAS_ROWS;
   SIGNS.forEach((name, i) => {
     const x = (i % ATLAS_COLS) * cw, y = Math.floor(i / ATLAS_COLS) * ch;
     const platform = name.startsWith('PLATFORM') || name === 'WAY OUT';

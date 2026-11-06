@@ -13,7 +13,7 @@ export const CONFIG = {
     spies: 8,
     minSpies: 8,
     maxSpies: 10,
-    civilians: 72,
+    civilians: 112,
     roundSeconds: 480,
     respawnSeconds: 5,
     civilianRespawnSeconds: 20,
@@ -127,9 +127,9 @@ export const CONFIG = {
     headMin: 0.15,
     headMax: 0.35,
     /** Belief gain per second while watching the true target up close (min..max by skill). */
-    observeMin: 0.4,
-    observeMax: 0.75,
-    observeRange: 22,
+    observeMin: 0.5,
+    observeMax: 0.9,
+    observeRange: 28,
     /** Belief gain per second from a visible agent with high suspicion. */
     suspiciousGain: 0.5,
     /** Belief gain per second when the target's red outline is visible to its hunter. */
@@ -153,9 +153,13 @@ export const CONFIG = {
     /** Civilians that happen to walk your way count less toward "being followed". */
     civilianFollowWeight: 0.25,
     noticeRadius: 10,
-    evadeCooldown: 20,
+    evadeCooldown: 30,
     evadeTime: 7,
-    scanSuspicionLimit: 30,
+    scanSuspicionLimit: 40,
+    /** Seconds a scanner reading guides the search. */
+    scanMemory: 30,
+    /** Blending bots pick points of interest within this radius (large maps). */
+    blendRadius: 28,
     scanConeDeg: 32,
     retaliateTime: 4,
     /** Nobody strikes during the opening seconds of a round (time to read the dossier). */
@@ -164,9 +168,25 @@ export const CONFIG = {
     firstScanMax: 18,
   },
 
+  trains: {
+    cars: 4,
+    carLength: 15,
+    carGap: 0.35,
+    /** Distance from the buffers where an arriving train starts braking. */
+    approachDistance: 110,
+    arriveTime: 20,
+    dwell: 40,
+    departTime: 22,
+    awayMin: 25,
+    awayMax: 50,
+    doorsOpenAfter: 2.5,
+    doorsCloseBefore: 6,
+    doorTime: 1.4,
+  },
+
   render: {
     maxPixelRatio: 1.5,
-    viewDistance: 140,
+    viewDistance: 230,
   },
 
   quality: {

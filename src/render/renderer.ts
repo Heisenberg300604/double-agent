@@ -5,7 +5,8 @@ import { CONFIG } from '../config';
 import type { World } from '../sim/world';
 import { CrowdRenderer } from './crowd';
 import { Effects } from './effects';
-import { buildEnvironment, buildMapMeshes, type MapVisuals } from './mapMesh';
+import { buildEnvironment, buildMapMeshes, createMapMaterials, type MapVisuals } from './mapMesh';
+import { TrainRenderer } from './trains';
 import { Atmosphere } from './atmosphere';
 import { QualityScaler } from './quality';
 import { Viewmodel } from './viewmodel';
@@ -47,6 +48,8 @@ export class GameRenderer {
   readonly effects = new Effects();
   readonly map: MapVisuals;
   readonly atmosphere: Atmosphere;
+  readonly trains: TrainRenderer;
+  private readonly hideTrainsBeyond: number;
   private env: THREE.Texture | null = null;
   /** Station clock: minutes since midnight. */
   stationMinutes = 8 * 60 + 3;
@@ -63,10 +66,12 @@ export class GameRenderer {
 
   constructor(container: HTMLElement, world: World) {
     this.container = container;
-    this.camera = new THREE.PerspectiveCamera(this.fov, 1, 0.05, CONFIG.render.viewDistance);
+    // Near 0.1 (the body radius keeps walls ≥ 0.3 m away; the gun has its own pass) gives the
+    // depth buffer 2× more precision than 0.05 over the larger station.
+    this.camera = new THREE.PerspectiveCamera(this.fov, 1, 0.1, CONFIG.render.viewDistance);
     this.camera.rotation.order = 'YXZ';
     this.scene.background = new THREE.Color(FOG_COLOR);
-    this.scene.fog = new THREE.Fog(FOG_COLOR, 24, 115);
+    this.scene.fog = new THREE.Fog(FOG_COLOR, 30, 160);
 
     this.scene.add(new THREE.HemisphereLight(0xc9bca6, 0x2a2a31, 2.0));
     const sun = new THREE.DirectionalLight(0xffe2bd, 0.65);
@@ -78,8 +83,11 @@ export class GameRenderer {
       this.scene.add(p);
     }
 
-    this.map = buildMapMeshes(world.layout);
+    this.map = buildMapMeshes(world.layout, createMapMaterials());
     this.scene.add(this.map.group);
+    this.trains = new TrainRenderer(world.layout, this.map);
+    this.scene.add(this.trains.group);
+    this.hideTrainsBeyond = world.layout.bounds.maxX + 70;
     this.atmosphere = new Atmosphere(world.layout);
     this.scene.add(this.atmosphere.group);
     this.crowd = new CrowdRenderer(world.agents.length + 4, world.layout.pois);
@@ -138,9 +146,14 @@ export class GameRenderer {
     this.renderer.setPixelRatio(dpr * levelScale * scale);
     const partLevel = this.level === 'low' ? 0.4 : this.level === 'medium' ? 0.7 : 1;
     this.effects.particleScale = partLevel * (scale < 1 ? scale * 0.8 : 1);
-    const fogFar = this.level === 'low' ? 85 : 115;
+    // Geometry must fade fully into the fog *before* the far plane clips it,
+    // otherwise distant walls pop out of existence while turning.
+    const fogFar = this.level === 'low' ? 120 : 160;
     (this.scene.fog as THREE.Fog).far = fogFar;
-    this.camera.far = fogFar + 10;
+    this.camera.far = Math.min(CONFIG.render.viewDistance, fogFar + 40);
+    // The polished (PBR) floor covers most of the screen; use the cheap one below High.
+    const floorMesh = this.map.group.children.find((c) => c.userData.group === 'floor') as THREE.Mesh | undefined;
+    if (floorMesh) floorMesh.material = this.level === 'high' ? this.map.floorRich : this.map.floorCheap;
     this.camera.updateProjectionMatrix();
     this.resize();
   }
@@ -180,7 +193,8 @@ export class GameRenderer {
     this.map.clock.update(this.stationMinutes);
     this.map.led.update(this.stationMinutes, o.dt);
     const vh = this.renderer.domElement.height;
-    this.atmosphere.update(o.dt, performance.now() / 1000, vh, this.camera.fov, this.effects.particleScale);
+    this.atmosphere.update(performance.now() / 1000, vh, this.camera.fov, this.effects.particleScale);
+    this.trains.update(world.trains.trains, this.hideTrainsBeyond);
     this.viewmodel.update(o.dt, o.drawn && o.showViewmodel, o.aiming, o.reloadProgress, o.moveSpeed, o.running, this.camera.aspect, this.fov * 0.85);
 
     const r = this.renderer;

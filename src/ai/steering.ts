@@ -18,6 +18,16 @@ export function setGoal(w: World, a: Agent, x: number, y: number, z: number, goa
   }
   a.path = path;
   a.pathIndex = 0;
+  // A goal point that isn't standable (e.g. a scanner estimate inside a wall) or
+  // can't be reached in a straight line from the last waypoint is replaced by
+  // that waypoint; otherwise the final approach would push into geometry forever.
+  const last = w.nav.nodes[path[path.length - 1]];
+  const gy = w.col.groundHeight(x, z, y + 0.1);
+  if (!w.col.circleFree(x, z, gy, 0.32, 1.7) || !w.col.segmentWalkable(last.x, last.y, last.z, x, gy, z, 0.3)) {
+    x = last.x;
+    y = last.y;
+    z = last.z;
+  }
   // Skip the first node if we're already past it toward the second.
   if (path.length > 1) {
     const n0 = w.nav.nodes[path[0]], n1 = w.nav.nodes[path[1]];
@@ -30,6 +40,7 @@ export function setGoal(w: World, a: Agent, x: number, y: number, z: number, goa
   a.goalZ = z;
   a.hasGoal = true;
   a.stuckTimer = 0;
+  a.stuckCount = 0;
   a.progressX = a.x;
   a.progressZ = a.z;
   return true;
@@ -63,8 +74,12 @@ export function followPath(w: World, a: Agent, speed: number, dt: number): boole
       const p = w.nav.nodes[path[a.pathIndex - 1]];
       const ex = n.x - p.x, ez = n.z - p.z;
       const el = Math.hypot(ex, ez) || 1;
-      tx += (-ez / el) * a.laneOffset;
-      tz += (ex / el) * a.laneOffset;
+      const ox = tx + (-ez / el) * a.laneOffset, oz = tz + (ex / el) * a.laneOffset;
+      // Only use the lane offset where it stays clear of rails, corners and walls.
+      if (w.col.circleFree(ox, oz, n.y, 0.34, 1.7)) {
+        tx = ox;
+        tz = oz;
+      }
     }
     const d = Math.hypot(tx - a.x, tz - a.z);
     const reach = a.pathIndex === path.length - 1 ? 0.5 : 0.9;
@@ -96,8 +111,15 @@ export function followPath(w: World, a: Agent, speed: number, dt: number): boole
     a.progressX = a.x;
     a.progressZ = a.z;
     a.stuckTimer = 0;
+    if (moved >= 0.4) a.stuckCount = 0;
     if (moved < 0.4) {
-      if (!setGoal(w, a, a.goalX, a.goalY, a.goalZ)) clearGoal(a);
+      const tries = a.stuckCount + 1;
+      // After a few failed repaths give up: the brain picks a new destination.
+      if (tries >= 3 || !setGoal(w, a, a.goalX, a.goalY, a.goalZ)) {
+        clearGoal(a);
+        return true;
+      }
+      a.stuckCount = tries;
       a.laneOffset = -a.laneOffset * 0.5;
       // Nudge sideways to break symmetric deadlocks.
       a.wantX += (w.rng.next() - 0.5) * 2;

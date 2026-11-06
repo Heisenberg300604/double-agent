@@ -149,6 +149,8 @@ export interface Agent {
   hasGoal: boolean;
   laneOffset: number;
   stuckTimer: number;
+  /** Consecutive repaths without progress; the goal is abandoned after a few. */
+  stuckCount: number;
   progressX: number;
   progressZ: number;
   occupiedPoi: number;
@@ -194,6 +196,7 @@ export type SimEvent =
   | { type: 'reload'; spy: number }
   | { type: 'jump'; agent: number }
   | { type: 'reveal'; spy: number }
+  | { type: 'train'; track: number; phase: 'arriving' | 'arrived' | 'closing' | 'departing'; service: number }
   | { type: 'roundEnd' };
 
 export interface Noise {

@@ -36,6 +36,9 @@ function runMatch(seed: number, withPlayer: boolean): { w: World; stats: MatchSt
     for (const a of w.agents) {
       if (!Number.isFinite(a.x) || !Number.isFinite(a.y) || !Number.isFinite(a.z)) stats.violations.push(`NaN agent ${a.id}`);
       if (a.x < b.minX || a.x > b.maxX || a.z < b.minZ || a.z > b.maxZ || a.y < -0.01 || a.y > 6) stats.violations.push(`out of bounds ${a.id} ${a.x},${a.y},${a.z}`);
+      for (const tr of w.layout.tracks) {
+        if (a.alive && a.z > tr.z0 + 0.05 && a.z < tr.z1 - 0.05 && a.x > w.layout.tracks[0].stopX - 2) stats.violations.push(`on the tracks ${a.id} ${a.x.toFixed(1)},${a.z.toFixed(1)}`);
+      }
       if (a.alive && a.pose === 'stand' && !w.col.circleFree(a.x, a.z, a.y, 0.12, bodyHeight(a))) {
         stats.violations.push(`inside wall ${a.id} ${a.x.toFixed(2)},${a.y.toFixed(2)},${a.z.toFixed(2)}`);
       }
@@ -103,29 +106,59 @@ describe('player movement', () => {
     return false;
   }
 
-  it('can walk from the café, up the west stairs onto the balcony, across and down to the platforms', () => {
+  it('can walk from the café, up the stairs onto the balcony, across, down to the far platform and back to the waiting room', () => {
     const w = new World({ seed: 5, withPlayer: true, civilians: 0, spies: 8 });
-    for (const s of w.spies) if (!s.isPlayer) { s.x = 39; s.z = 24; } // keep bots out of the way
+    const L = w.layout.landmarks;
+    for (const s of w.spies) if (!s.isPlayer) { s.x = 90; s.z = 24; } // keep bots out of the way
     const p = w.player!;
-    p.x = p.px = -33; p.z = p.pz = -9; p.y = 0;
-    expect(walkTo(w, -10, 5, 12, 60)).toBe(true);
+    p.x = p.px = L.cafe.x; p.z = p.pz = L.cafe.z; p.y = 0;
+    expect(walkTo(w, L.balcony.x, L.balcony.y, L.balcony.z, 60)).toBe(true);
     expect(p.y).toBeCloseTo(5, 1);
-    expect(walkTo(w, 6, 5, 12, 60)).toBe(true);
-    expect(walkTo(w, 30, 0, -20, 90)).toBe(true);
+    expect(walkTo(w, 6, 5, 12.5, 60)).toBe(true);
+    expect(walkTo(w, L.platformFar.x, 0, L.platformFar.z, 120)).toBe(true);
     expect(p.y).toBeCloseTo(0, 1);
+    expect(walkTo(w, L.waitingRoom.x, 0, L.waitingRoom.z, 150)).toBe(true);
+  });
+
+  it('walks at the configured speeds regardless of how ticks are batched into frames', () => {
+    for (const [mode, speed] of [['walk', CONFIG.movement.walkSpeed], ['run', CONFIG.movement.runSpeed]] as const) {
+      const w = new World({ seed: 9, withPlayer: true, civilians: 0 });
+      const p = w.player!;
+      p.x = p.px = 0; p.z = p.pz = -2; p.y = 0;
+      const intent = emptyIntent();
+      intent.moveX = -1;
+      intent.mode = mode;
+      for (let t = 0; t < 60; t++) { w.setPlayerIntent(intent); w.step(DT); }
+      const x0 = p.x;
+      for (let t = 0; t < 120; t++) { w.setPlayerIntent(intent); w.step(DT); }
+      expect(Math.abs(p.x - x0) / 2).toBeCloseTo(speed, 1);
+    }
+  });
+
+  it('cannot step onto the track beds', () => {
+    const w = new World({ seed: 7, withPlayer: true, civilians: 0 });
+    const p = w.player!;
+    const tr = w.layout.tracks[1];
+    p.x = p.px = 60; p.z = p.pz = tr.z1 + 1.5; p.y = 0;
+    const intent = emptyIntent();
+    intent.moveZ = -1;
+    for (let t = 0; t < 240; t++) { w.setPlayerIntent(intent); w.step(DT); }
+    expect(p.z).toBeGreaterThan(tr.z1);
   });
 
   it('cannot walk through a wall', () => {
     const w = new World({ seed: 6, withPlayer: true, civilians: 0 });
     const p = w.player!;
-    p.x = -5; p.z = 13.5; p.y = 0; // under the balcony, facing the north inner wall (no arch here)
+    const probe = w.layout.landmarks.wallProbe; // under the balcony, facing the north inner wall (no arch here)
+    p.x = probe.x; p.z = probe.z; p.y = 0;
+    const wallZ = probe.z + 1.5;
     const intent = emptyIntent();
     intent.moveZ = 1;
     for (let t = 0; t < 180; t++) {
       w.setPlayerIntent(intent);
       w.step(DT);
     }
-    expect(p.z).toBeLessThan(14.5 - CONFIG.body.radius + 0.01);
+    expect(p.z).toBeLessThan(wallZ - CONFIG.body.radius + 0.01);
   });
 
   it('jumping raises suspicion by 10', () => {

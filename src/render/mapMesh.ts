@@ -55,17 +55,8 @@ const MATS: Record<Exclude<MatId, 'invisible'>, [Group, number]> = {
 
 /** Texture world-space tiling size (metres per repeat). */
 const TILE: Partial<Record<MatId, number>> = {
-  floor: 4, floorCorridor: 3, platform: 3, wall: 3, wallGreen: 3, wallLow: 2,
+  floor: 4, floorCorridor: 6, platform: 3, wall: 3, wallGreen: 3, wallLow: 2,
 };
-
-export interface MapVisuals {
-  group: THREE.Group;
-  /** Materials that should receive the environment map. */
-  envMaterials: THREE.MeshStandardMaterial[];
-  board: LiveBoard;
-  clock: LiveClock;
-  led: LiveLed;
-}
 
 const tmpColor = new THREE.Color();
 
@@ -118,20 +109,34 @@ function geometryFor(b: Box): THREE.BufferGeometry {
   return g;
 }
 
-export function buildMapMeshes(layout: MapLayout): MapVisuals {
+export interface MapMaterials {
+  mats: Record<Group, THREE.Material>;
+  envMaterials: THREE.MeshStandardMaterial[];
+  board: LiveBoard;
+  clock: LiveClock;
+  led: LiveLed;
+  /** The polished floor is the most expensive material; swapped on low/medium. */
+  floorRich: THREE.MeshStandardMaterial;
+  floorCheap: THREE.MeshLambertMaterial;
+}
+
+export function createMapMaterials(): MapMaterials {
   const board = new LiveBoard();
   const clock = new LiveClock();
   const led = new LiveLed();
-  const floorMat = new THREE.MeshStandardMaterial({ map: floorTexture(), roughness: 0.38, metalness: 0, envMapIntensity: 0.8 });
+  const floorTex = floorTexture();
+  const floorRich = new THREE.MeshStandardMaterial({ map: floorTex, roughness: 0.38, metalness: 0, envMapIntensity: 0.8 });
+  const floorCheap = new THREE.MeshLambertMaterial({ map: floorTex });
+  // Rougher metal: glossy thin rings sparkle (specular aliasing) as the view turns.
   const shiny = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.48, metalness: 0.7, envMapIntensity: 1.0 });
-  const paint = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.28, metalness: 0.25, envMapIntensity: 1.1 });
+  const paint = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.3, metalness: 0.25, envMapIntensity: 1.1 });
   const mats: Record<Group, THREE.Material> = {
     solid: new THREE.MeshLambertMaterial({ vertexColors: true }),
     panel: new THREE.MeshLambertMaterial({ vertexColors: true, map: wallTexture() }),
     shiny,
     paint,
     glow: new THREE.MeshBasicMaterial({ vertexColors: true }),
-    floor: floorMat,
+    floor: floorRich,
     floorCorridor: new THREE.MeshLambertMaterial({ map: corridorTexture() }),
     platform: new THREE.MeshLambertMaterial({ map: concreteTexture() }),
     board: new THREE.MeshBasicMaterial({ map: board.texture }),
@@ -139,8 +144,13 @@ export function buildMapMeshes(layout: MapLayout): MapVisuals {
     signs: new THREE.MeshBasicMaterial({ map: signAtlasTexture() }),
     led: new THREE.MeshBasicMaterial({ map: led.texture }),
   };
+  return { mats, envMaterials: [floorRich, shiny, paint], board, clock, led, floorRich, floorCheap };
+}
+
+/** Merge boxes into one mesh per material group. */
+export function mergeBoxes(boxes: readonly Box[], mats: Record<Group, THREE.Material>, name: string): THREE.Group {
   const byGroup = new Map<Group, THREE.BufferGeometry[]>();
-  for (const b of layout.boxes) {
+  for (const b of boxes) {
     if (b.mat === 'invisible') continue;
     const grp = MATS[b.mat][0];
     const list = byGroup.get(grp) ?? [];
@@ -156,12 +166,25 @@ export function buildMapMeshes(layout: MapLayout): MapVisuals {
     }
     merged.computeBoundingSphere();
     const mesh = new THREE.Mesh(merged, mats[grp]);
-    mesh.name = `map:${grp}`;
-    mesh.matrixAutoUpdate = false;
+    mesh.name = `${name}:${grp}`;
+    mesh.userData.group = grp;
     group.add(mesh);
     for (const g of geos) g.dispose();
   }
-  return { group, envMaterials: [floorMat, shiny, paint], board, clock, led };
+  return group;
+}
+
+export interface MapVisuals extends MapMaterials {
+  group: THREE.Group;
+}
+
+export function buildMapMeshes(layout: MapLayout, materials: MapMaterials): MapVisuals {
+  const group = mergeBoxes(layout.boxes, materials.mats, 'map');
+  group.traverse((o) => {
+    o.matrixAutoUpdate = false;
+    o.updateMatrix();
+  });
+  return { ...materials, group };
 }
 
 /**

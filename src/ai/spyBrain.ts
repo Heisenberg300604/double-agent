@@ -309,16 +309,18 @@ export class SpyBrain {
       return;
     }
 
-    if (this.scan && w.time - this.scan.time < 22) {
+    if (this.scan && w.time - this.scan.time < A.scanMemory) {
       this.setState('search');
       if (!a.hasGoal && !this.idling) {
         const sc = this.scan;
-        const est = sc.band === 'near' ? Math.min(sc.dist, 8) : sc.band === 'mid' ? 26 : 50;
+        const est = sc.band === 'near' ? Math.min(sc.dist, 8) : sc.band === 'mid' ? 26 : 55;
         const gx = sc.x + sc.dx * est + w.rng.range(-4, 4);
         const gz = sc.z + sc.dz * est + w.rng.range(-4, 4);
         const gy = Math.abs(sc.dy) > 2.5 ? a.y + sc.dy : a.y;
         if (Math.hypot(gx - a.x, gz - a.z) > 4) {
           setGoal(w, a, gx, gy, gz);
+          // Cover long distances briskly (still under the running-suspicion threshold).
+          a.maxSpeed = sc.band === 'near' ? CONFIG.movement.walkSpeed : A.hurrySpeed;
         } else {
           this.blend(dt, 10);
         }
@@ -331,7 +333,7 @@ export class SpyBrain {
     }
 
     this.setState('blend');
-    this.blend(dt, 0);
+    this.blend(dt, A.blendRadius);
   }
 
   /** Behave like a civilian: walk to a POI, linger a little. */

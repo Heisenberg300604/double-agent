@@ -28,7 +28,8 @@ class Game {
   private readonly menus: Menus;
   private settings: Settings;
   private state: GameState = 'title';
-  private readonly loop = new FixedStep(CONFIG.sim.tickRate);
+  // Up to 10 catch-up ticks per frame (ticks cost ~0.03 ms): a 150 ms hitch keeps real-time pace instead of slowing the game.
+  private readonly loop = new FixedStep(CONFIG.sim.tickRate, 10);
   private yaw = 0;
   private pitch = 0;
   private readonly intent = emptyIntent();
@@ -38,6 +39,10 @@ class Game {
   private frameMs = 16;
   private simMs = 0;
   private renderMs = 0;
+  /** Measured player ground speed (m/s) and simulation rate (ticks/s), for the F3 overlay. */
+  private measuredSpeed = 0;
+  private measuredTps = 60;
+  private lastTick = 0;
   private camEye: number = CONFIG.body.eyeHeight;
   private stepDist = 0;
   private deathBy = '';
@@ -194,7 +199,7 @@ class Game {
   // ---------------------------------------------------------------- frame
   private frame(now: number): void {
     requestAnimationFrame((t) => this.frame(t));
-    const dt = Math.min(0.1, (now - this.lastTime) / 1000);
+    const dt = Math.min(0.15, Math.max(0, (now - this.lastTime) / 1000));
     this.lastTime = now;
     this.frameMs += (dt * 1000 - this.frameMs) * 0.05;
     this.renderer.tickQuality(dt);
@@ -219,6 +224,12 @@ class Game {
       this.world.drainEvents();
     }
     this.simMs += (performance.now() - t0 - this.simMs) * 0.05;
+    if (dt > 0 && this.state === 'playing') {
+      const ticks = this.world.tick - this.lastTick;
+      this.measuredTps += (ticks / dt - this.measuredTps) * 0.03;
+      if (this.world.player) this.measuredSpeed += (this.world.player.speed - this.measuredSpeed) * 0.1;
+    }
+    this.lastTick = this.world.tick;
 
     if (this.state === 'playing' || this.state === 'title') this.stationLife(dt);
     this.renderFrame(dt);
@@ -248,31 +259,46 @@ class Game {
       this.audio.setSurroundings(Math.min(1, near / 12), Math.max(0, Math.min(1, (this.cam.x - 20) / 6)));
     }
     if (this.state !== 'playing') return;
+    // General announcements between train events.
     this.announceTimer -= dt;
     if (this.announceTimer > 0) return;
-    this.announceTimer = 70 + Math.random() * 25;
-    const mins = this.renderer.stationMinutes;
-    const next = Math.floor(mins / 7) * 7 + 7;
-    const hh = Math.floor(next / 60) % 24, mm = next % 60;
-    const time = `${hh} ${mm < 10 ? `oh ${mm}` : mm}`;
-    const dests = ['Northgate', 'Halvern Bay', 'Castlemere', 'Orrin Fields', 'Saltworth', 'Kings Vale', 'Ashcombe', 'Mirelow', 'Brandish Cross', 'Westerly'];
-    const dest = dests[Math.floor(next / 7) % dests.length];
-    const train = this.announceIdx % 2;
-    const platform = train === 0 ? 1 : 3;
-    const lines = [
-      `Platform ${platform} for the ${time} service to ${dest}. This train is now ready to board.`,
+    this.announceTimer = 95 + Math.random() * 40;
+    const general = [
       'Passengers are reminded to keep their luggage with them at all times. Unattended items may be removed.',
-      `The ${time} to ${dest}, calling at all stations, will depart from platform ${platform}. Please stand clear of the doors.`,
       'Would all passengers please take care on the stairs to the gallery.',
+      'The waiting room and restaurant are open at the west end of the concourse.',
+      'Please do not smoke on the platforms.',
     ];
-    const text = lines[this.announceIdx % lines.length];
-    this.announceIdx++;
-    this.audio.announce(text);
-    if (this.announceIdx % 2 === 1 || text.includes('Platform') || text.includes('platform')) {
-      const doors = this.renderer.atmosphere.doors;
-      const z = train === 0 ? 13 : -13;
-      this.later(6, () => doors.cycle(train, 12));
-      this.later(6 + 1.4 + 12 - 2, () => this.audio.doorBeeps({ x: 31, y: 2, z }));
+    this.audio.announce(general[this.announceIdx++ % general.length]);
+  }
+
+  /** Station announcements and sounds driven by the simulation's train events. */
+  private onTrain(e: Extract<SimEvent, { type: 'train' }>): void {
+    const dests = ['Northgate', 'Halvern Bay', 'Castlemere', 'Orrin Fields', 'Saltworth', 'Kings Vale', 'Ashcombe', 'Mirelow', 'Brandish Cross', 'Westerly'];
+    const tr = this.world.layout.tracks[e.track];
+    const plat = tr.platforms.join(' and ');
+    const dest = dests[(e.service * 3 + e.track * 5) % dests.length];
+    const from = dests[(e.service * 7 + e.track * 2 + 4) % dests.length];
+    const zc = (tr.z0 + tr.z1) / 2;
+    const mid = { x: tr.stopX + 30, y: 2, z: zc };
+    const T = CONFIG.trains;
+    // Keep the PA from talking over itself.
+    this.announceTimer = Math.max(this.announceTimer, 30);
+    switch (e.phase) {
+      case 'arriving':
+        this.audio.announce(`The train now approaching platform ${plat} is the service from ${from}. Please stand back from the platform edge.`);
+        this.audio.trainArrive(mid, T.arriveTime);
+        break;
+      case 'arrived':
+        this.later(6, () => this.audio.announce(`Platforms ${plat} for the service to ${dest}, calling at all stations. This train is now ready to board.`));
+        break;
+      case 'closing':
+        this.audio.announce(`The train at platform ${plat} is about to depart. Please stand clear of the doors.`);
+        this.later(4.5, () => this.audio.doorBeeps({ x: tr.stopX + 10, y: 2, z: zc }));
+        break;
+      case 'departing':
+        this.audio.trainDepart(mid, T.departTime);
+        break;
     }
   }
 
@@ -383,6 +409,9 @@ class Game {
             this.hud.centerMessage('Back in the field');
           }
           break;
+        case 'train':
+          this.onTrain(e);
+          break;
         case 'jump':
         case 'smokeThrow':
         case 'roundEnd':
@@ -471,7 +500,7 @@ class Game {
       // Attract mode: slow pan across the concourse from the balcony.
       this.attractT += dt;
       const a = this.attractT * 0.05;
-      this.cam.x = -8 + Math.sin(a) * 10;
+      this.cam.x = -10 + Math.sin(a) * 11;
       this.cam.y = 10.5;
       this.cam.z = 14;
       this.cam.yaw = Math.sin(a * 0.7) * 0.45;
@@ -501,7 +530,8 @@ class Game {
       this.hud.setDebug(
         `FPS ${(1000 / this.frameMs).toFixed(0)} (avg ${r.scaler.averageFps().toFixed(0)})  frame ${this.frameMs.toFixed(2)} ms  sim ${this.simMs.toFixed(2)} ms  render ${this.renderMs.toFixed(2)} ms\n` +
         `draw calls ${r.drawCalls}  tris ${(r.triangles / 1000).toFixed(1)}k  scale ${r.renderScale.toFixed(2)}  quality ${r.setting}/${r.level}\n` +
-        `agents ${w.agents.length}  spies ${w.spies.length}  seed ${this.seed}`,
+        `agents ${w.agents.length}  spies ${w.spies.length}  seed ${this.seed}\n` +
+        `sim ${this.measuredTps.toFixed(1)} ticks/s (target ${CONFIG.sim.tickRate})  player ${this.measuredSpeed.toFixed(2)} m/s (walk ${CONFIG.movement.walkSpeed}, run ${CONFIG.movement.runSpeed})`,
       );
     } else {
       this.hud.setDebug(null);

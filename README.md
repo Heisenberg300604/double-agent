@@ -2,7 +2,7 @@
 
 A first-person spy shooter for the browser. Eight assassins in near-identical suits hide in a crowd of civilians inside a grand train station. Each one has a secret target and is hunted by someone they don't know. Acting human keeps you hidden. Acting like a killer gets you found.
 
-Single player: you and 7 AI spies, plus 72 AI civilians. Everything is procedural: no model, texture or audio files.
+Single player: you and 7 AI spies, plus 112 AI civilians, across a 156 m × 54 m station. It has a concourse with a gallery, a west waiting room and restaurant, shop corridors, and three 70 m platforms where trains arrive, dwell and depart. Everything is procedural: no model, texture or audio files.
 
 ## Run
 
@@ -31,7 +31,7 @@ Optional URL parameters: `?seed=123` replays a match with the same seed (the see
 | Q / E / F | Scanner / Disguise / Smoke |
 | Tab | Scoreboard |
 | Esc | Pause |
-| F3 | Debug overlay (FPS, frame time, draw calls) |
+| F3 | Debug overlay (FPS, frame time, draw calls, measured ticks/s and walking speed) |
 
 Ctrl+W is the browser's close-tab shortcut, so C is the safer crouch key. The game asks for confirmation before the page closes during a match.
 
@@ -98,6 +98,7 @@ src/
   - Lighting uses no shadow maps: blob shadows go under each character, plus 3 point lights and fog.
   - Effects are pooled buffers, one draw call each.
   - The auto-quality scaler lowers the render scale (1.0 → 0.85 → 0.7) when the 2 s average FPS drops below 50, and raises it again after 5 s above 58.
+- **Trains.** Train movement runs inside the simulation (`sim/trains.ts`), deterministic per seed. Each track cycles through away → arriving (constant deceleration to the buffers) → dwell (doors open) → departing. Moving cars block sight and bullets. Movement-only guards keep people off the track beds without blocking sight lines across them. Announcements, door beeps, braking and horns are driven by the train events.
 - **Collision.** Agents are circles with a height, tested against AABBs in a 4 m uniform grid. Stairs are ramps. Shooting uses a hitscan raycast against head spheres, body boxes and the AABB grid. It never touches render meshes.
 
 ## Measured
@@ -107,13 +108,13 @@ These numbers come from Chrome on Apple-silicon macOS:
 | Metric | Value |
 |---|---|
 | Frame rate | Locked to 60 FPS (vsync) |
-| Simulation time | ≈0.5 ms per frame |
+| Simulation time | ≈0.6 ms per frame (120 agents) |
 | Render CPU time | ≈1 ms per frame |
-| Draw calls | 18–30 |
-| Triangles | ≈90k |
-| Bundle size | 177 KB gzipped |
+| Draw calls | 17–28 |
+| Triangles | ≈131k |
+| Bundle size | 180 KB gzipped |
 | Time to title screen | ≈0.3 s (production build) |
-| Full 8-minute headless match (bots only) | ≈1.3 s |
+| Full 8-minute headless match (bots only) | ≈2 s |
 
 ## Developer scripts
 
@@ -122,4 +123,5 @@ These numbers come from Chrome on Apple-silicon macOS:
 | `npm run sim -- <seed>` | Runs one bot-only match headless and prints kills, AI state time and scores. |
 | `npm run balance` | Measures how long a passive player survives across 6 seeds. |
 | `npx vite-node scripts/navcheck.ts` | Prints nav-graph statistics. |
+| `npx vite-node scripts/crowdcheck.ts` | Reports crowd spread across areas and the longest time any agent was stuck. |
 | `npx vite-node scripts/zfight.ts` | Lists coplanar overlapping faces (z-fighting candidates) in the map. |
