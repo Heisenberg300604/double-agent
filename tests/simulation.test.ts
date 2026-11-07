@@ -110,6 +110,7 @@ describe('player movement', () => {
     const w = new World({ seed: 5, withPlayer: true, civilians: 0, spies: 8 });
     const L = w.layout.landmarks;
     for (const s of w.spies) if (!s.isPlayer) { s.x = 90; s.z = 24; } // keep bots out of the way
+    w.brains.clear(); // and idle: this test is about movement, not about surviving a hunt
     const p = w.player!;
     p.x = p.px = L.cafe.x; p.z = p.pz = L.cafe.z; p.y = 0;
     expect(walkTo(w, L.balcony.x, L.balcony.y, L.balcony.z, 60)).toBe(true);

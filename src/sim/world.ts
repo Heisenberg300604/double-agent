@@ -18,6 +18,7 @@ import { addSuspicion, updateSuspicion } from './suspicion';
 import { emptyIntent, type Agent, type Appearance, type Noise, type SimEvent, type Smoke, type SpyIntent } from './types';
 import { canSee } from '../ai/perception';
 import { civilianThink, panic, standUp } from '../ai/civilianBrain';
+import { activityFor, findInteractable, type Interactable } from './interact';
 import { followPath, clearGoal } from '../ai/steering';
 import { SpyBrain } from '../ai/spyBrain';
 import { TrainSystem } from './trains';
@@ -53,6 +54,8 @@ export class World {
   /** Events produced since the last drain. */
   events: SimEvent[] = [];
   readonly poiOccupant: Int32Array;
+  /** The player's current interact target (updated once per tick), for the HUD prompt. */
+  playerInteractable: Interactable | null = null;
   time = 0;
   tick = 0;
   timeLeft: number = CONFIG.match.roundSeconds;
@@ -125,6 +128,7 @@ export class World {
       yaw: this.rng.range(-Math.PI, Math.PI), pitch: 0, prevYaw: 0,
       wantX: 0, wantZ: 0, wantJump: false, faceYaw: NaN, speed: 0, maxSpeed: M.walkSpeed,
       crouch: false, onGround: true, pose: 'stand', seatX: 0, seatY: 0, seatZ: 0,
+      activity: 'none', blendTimer: 0, standLock: 0,
       animPhase: this.rng.range(0, 6.28), alive: true, health: CONFIG.health.max, deadTime: 0,
       appearance: look, baseAppearance: look,
       path: null, pathIndex: 0, goalX: 0, goalY: 0, goalZ: 0, hasGoal: false,
@@ -297,6 +301,10 @@ export class World {
     a.alive = true;
     a.health = CONFIG.health.max;
     a.pose = 'stand';
+    a.activity = 'none';
+    a.blendTimer = 0;
+    a.standLock = 0;
+    this.releasePoi(a);
     a.crouch = false;
     a.onGround = true;
     a.appearance = a.baseAppearance;
@@ -343,26 +351,110 @@ export class World {
     this.emit({ type: 'respawn', agent: a.id });
   }
 
+  // ------------------------------------------------------------------ blending (sit / activities)
+  /** Is the agent seated or busy with a standing activity? */
+  isBlending(a: Agent): boolean {
+    return a.pose === 'sit' || a.activity !== 'none';
+  }
+
+  /** Sit on a free seat POI. Returns false if it is taken. */
+  sitDown(a: Agent, poi: number): boolean {
+    const p = this.layout.pois[poi];
+    if (!p.seat || !a.alive) return false;
+    const occ = this.poiOccupant[poi];
+    if (occ >= 0 && occ !== a.id) return false;
+    this.claimPoi(a, poi);
+    a.pose = 'sit';
+    a.activity = 'none';
+    a.blendTimer = 0;
+    a.crouch = false;
+    a.seatX = p.seat.x;
+    a.seatY = p.seat.y;
+    a.seatZ = p.seat.z;
+    a.vx = a.vy = a.vz = 0;
+    // The player keeps free look; bots face the seat's direction.
+    a.faceYaw = a.isPlayer ? NaN : p.yaw;
+    return true;
+  }
+
+  /** Start a standing activity at a POI (newspaper stand, info board, café counter). */
+  startActivity(a: Agent, poi: number): boolean {
+    const p = this.layout.pois[poi];
+    const occ = this.poiOccupant[poi];
+    if (!a.alive || p.seat || (occ >= 0 && occ !== a.id)) return false;
+    const kind = activityFor(p.kind);
+    if (kind === 'none') return false;
+    this.claimPoi(a, poi);
+    a.activity = kind;
+    a.blendTimer = 0;
+    a.crouch = false;
+    if (!a.isPlayer) a.faceYaw = p.yaw;
+    return true;
+  }
+
+  /** Stand up or stop the activity, and release the spot. */
+  stopBlending(a: Agent): void {
+    if (a.pose === 'sit') {
+      standUp(this, a);
+      a.standLock = CONFIG.interact.standUpTime;
+    }
+    a.activity = 'none';
+    a.blendTimer = 0;
+    this.releasePoi(a);
+    if (a.isPlayer) a.faceYaw = NaN;
+  }
+
+  /** The player's interact key and the "any movement cancels" rules. */
+  private playerBlending(a: Agent, it: SpyIntent): void {
+    const s = a.spy!;
+    const moving = Math.hypot(it.moveX, it.moveZ) > 0.1 || it.jump;
+    if (this.isBlending(a)) {
+      // Drawing or firing cancels a standing activity; a seated agent may still shoot.
+      const drawCancels = a.activity !== 'none' && (it.aim || it.fire || s.drawn);
+      if (it.interact || moving || drawCancels) {
+        this.stopBlending(a);
+        // The same press never re-sits; the prompt reappears next tick.
+        this.playerInteractable = null;
+      } else {
+        this.playerInteractable = { kind: a.pose === 'sit' ? 'stand' : 'stop', poi: a.occupiedPoi };
+      }
+      return;
+    }
+    this.playerInteractable = findInteractable(this, a);
+    if (it.interact && this.playerInteractable) {
+      const t = this.playerInteractable;
+      if (t.kind === 'sit') this.sitDown(a, t.poi);
+      else if (t.kind === 'activity') this.startActivity(a, t.poi);
+      if (this.isBlending(a)) this.playerInteractable = { kind: a.pose === 'sit' ? 'stand' : 'stop', poi: a.occupiedPoi };
+    }
+  }
+
   // ------------------------------------------------------------------ spy actions
   private applySpyIntent(a: Agent, dt: number): void {
     const s = a.spy!;
     const it = s.intent;
     const W = CONFIG.weapon;
     if (!a.alive) {
-      it.fire = it.reload = it.scanner = it.disguise = it.smoke = it.jump = false;
+      it.fire = it.reload = it.scanner = it.disguise = it.smoke = it.jump = it.interact = false;
+      if (a.isPlayer) this.playerInteractable = null;
       return;
     }
     if (a.isPlayer) {
       a.yaw = it.yaw;
       a.pitch = it.pitch;
-      a.crouch = it.mode === 'crouch';
+      this.playerBlending(a, it);
+      it.interact = false;
+      a.standLock = Math.max(0, a.standLock - dt);
+      const blending = this.isBlending(a);
+      const locked = blending || a.standLock > 0;
+      a.crouch = !blending && it.mode === 'crouch';
       const speed = it.mode === 'run' ? M.runSpeed : it.mode === 'crouch' ? M.crouchSpeed : M.walkSpeed;
       a.maxSpeed = speed;
-      const ml = Math.hypot(it.moveX, it.moveZ);
+      const ml = locked ? 0 : Math.hypot(it.moveX, it.moveZ);
       const k = ml > 1 ? 1 / ml : 1;
-      a.wantX = it.moveX * k * speed;
-      a.wantZ = it.moveZ * k * speed;
-      a.wantJump = it.jump;
+      a.wantX = locked ? 0 : it.moveX * k * speed;
+      a.wantZ = locked ? 0 : it.moveZ * k * speed;
+      a.wantJump = it.jump && !locked;
       s.running = it.mode === 'run' && ml > 0.1 && a.speed > M.walkSpeed + 0.4;
     } else {
       s.running = a.speed > M.walkSpeed + 0.8;
@@ -504,7 +596,12 @@ export class World {
         this.emit({ type: 'jump', agent: a.id });
       }
     }
-    if (this.player && this.player.alive) this.pushPlayerOutOfCrowd(this.player);
+    if (this.player && this.player.alive && this.player.pose !== 'sit') this.pushPlayerOutOfCrowd(this.player);
+
+    // Blending timers (the bonus stops after a while in one spot).
+    for (const a of this.agents) {
+      if (a.alive && this.isBlending(a)) a.blendTimer += dt;
+    }
 
     // Suspicion.
     for (const s of this.spies) {
@@ -513,6 +610,7 @@ export class World {
       updateSuspicion(sp, {
         running: sp.running, drawn: sp.drawn, aiming: sp.aiming, nearSpy: this.nearOtherSpy(s),
         cover: sp.running && this.inPanickingCrowd(s),
+        blend: this.blendBonus(s),
       }, dt);
     }
 
@@ -582,6 +680,14 @@ export class World {
       p.z += (dz / d) * (R - d);
     }
     this.col.resolveCircle(p, CONFIG.body.radius, bodyHeight(p));
+  }
+
+  /** Which blending bonus applies to this agent right now, if any. */
+  blendBonus(a: Agent): 'none' | 'seated' | 'activity' {
+    if (!a.alive || a.blendTimer > CONFIG.interact.blendBonusSeconds) return 'none';
+    if (a.pose === 'sit') return 'seated';
+    if (a.activity !== 'none') return 'activity';
+    return 'none';
   }
 
   private nearOtherSpy(a: Agent): boolean {

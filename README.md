@@ -29,6 +29,7 @@ Optional URL parameters: `?seed=123` replays a match with the same seed (the see
 | Left mouse | Fire |
 | R | Reload |
 | Q / E / F | Scanner / Disguise / Smoke |
+| G | Interact: sit on a bench or café chair, read the paper, check the departures board, wait at a counter. Press again or move to stop. |
 | Tab | Scoreboard |
 | Esc | Pause |
 | F3 | Debug overlay (FPS, frame time, draw calls, measured ticks/s and walking speed) |
@@ -59,6 +60,7 @@ Ctrl+W is the browser's close-tab shortcut, so C is the safer crouch key. The ga
   - firing: sets it to 100
 
   Walking, idling and crouching let it decay at 20/s. Above 60, your hunter sees you outlined in red. Likewise, you see your target outlined when they are exposed.
+- **Blending in (G).** Sitting lets suspicion decay at 30/s, and a standing activity (newspaper, departures board, counter) at 26/s. Hunters also learn half as much from watching you while you do it. The bonus stops after 25 s in the same spot. You can draw and fire while seated, but you can't move; standing up takes 0.4 s. Drawing, firing or moving ends a standing activity. AI spies sit and read too, so sitting is not proof of innocence.
 - **Gadgets.**
 
   | Gadget | Key | Cooldown | Effect |

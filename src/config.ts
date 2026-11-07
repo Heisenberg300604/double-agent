@@ -89,7 +89,22 @@ export const CONFIG = {
     proximityDelay: 3,
     proximity: 10,
     decay: 20,
+    /** Decay per second while seated on a bench or café chair (blending in). */
+    seatedDecay: 30,
+    /** Decay per second during a standing activity (reading, phone, board). */
+    activityDecay: 26,
     exposed: 60,
+  },
+
+  interact: {
+    /** Max distance from the seat or activity spot (m). */
+    range: 1.6,
+    /** Half-angle of the look cone that an interactable must fall in. */
+    coneDeg: 35,
+    /** Movement lock after standing up from a seat (s). */
+    standUpTime: 0.4,
+    /** The blending bonus (faster decay, weaker observation) stops after this long in one spot. */
+    blendBonusSeconds: 25,
   },
 
   gadgets: {
@@ -130,6 +145,8 @@ export const CONFIG = {
     observeMin: 0.5,
     observeMax: 0.9,
     observeRange: 28,
+    /** Observation gain multiplier while the target is seated or busy with an activity. */
+    blendObserveFactor: 0.5,
     /** Belief gain per second from a visible agent with high suspicion. */
     suspiciousGain: 0.5,
     /** Belief gain per second when the target's red outline is visible to its hunter. */
@@ -160,6 +177,11 @@ export const CONFIG = {
     scanMemory: 30,
     /** Blending bots pick points of interest within this radius (large maps). */
     blendRadius: 28,
+    /** While searching near a scanner estimate: chance per stop to linger at a bench/stand instead of wandering on. */
+    searchBlendChance: 0.3,
+    /** How long a searching bot lingers there (s). Short, so the search keeps moving. */
+    searchBlendMin: 2,
+    searchBlendMax: 5,
     scanConeDeg: 32,
     retaliateTime: 4,
     /** Nobody strikes during the opening seconds of a round (time to read the dossier). */

@@ -28,6 +28,8 @@ interface ScanMemory {
   dist: number;
   dy: number;
   time: number;
+  /** The estimated spot has been walked to; now blend in around it. */
+  reached: boolean;
 }
 
 export class SpyBrain {
@@ -211,7 +213,10 @@ export class SpyBrain {
         if (!isTarget && d < 12 && o.spy.suspicion > 85) threat = threat < 0 ? id : threat;
       }
       if (o.spy && o.spy.revealTimer > 0) wgt += A.suspiciousGain * dt;
-      if (isTarget && d < A.observeRange && o.spy!.disguiseTimer <= 0) wgt += this.skill.observe * (d < 10 ? 2 : 1) * dt;
+      if (isTarget && d < A.observeRange && o.spy!.disguiseTimer <= 0) {
+        const blend = w.blendBonus(o) !== 'none' ? A.blendObserveFactor : 1;
+        wgt += this.skill.observe * (d < 10 ? 2 : 1) * blend * dt;
+      }
       if (!isTarget) wgt *= 1 - A.decayPerSecond * dt;
       if (wgt > 0.01) this.belief.set(id, Math.min(6, wgt));
     }
@@ -249,7 +254,7 @@ export class SpyBrain {
     const a = this.a, w = this.w;
     const info = scanInfo(w, a);
     if (!info) return;
-    this.scan = { x: a.x, z: a.z, dx: info.dx, dz: info.dz, band: info.band, dist: info.dist, dy: info.dy, time: w.time };
+    this.scan = { x: a.x, z: a.z, dx: info.dx, dz: info.dz, band: info.band, dist: info.dist, dy: info.dy, time: w.time, reached: false };
     const lo = info.band === 'near' ? 0 : info.band === 'mid' ? CONFIG.gadgets.scanner.near - 3 : CONFIG.gadgets.scanner.mid - 3;
     const hi = info.band === 'near' ? CONFIG.gadgets.scanner.near + 3 : info.band === 'mid' ? CONFIG.gadgets.scanner.mid + 3 : 999;
     w.hash.query(a.x, a.z, CONFIG.perception.range, this.nbr);
@@ -311,23 +316,33 @@ export class SpyBrain {
 
     if (this.scan && w.time - this.scan.time < A.scanMemory) {
       this.setState('search');
-      if (!a.hasGoal && !this.idling) {
-        const sc = this.scan;
-        const est = sc.band === 'near' ? Math.min(sc.dist, 8) : sc.band === 'mid' ? 26 : 55;
-        const gx = sc.x + sc.dx * est + w.rng.range(-4, 4);
-        const gz = sc.z + sc.dz * est + w.rng.range(-4, 4);
-        const gy = Math.abs(sc.dy) > 2.5 ? a.y + sc.dy : a.y;
-        if (Math.hypot(gx - a.x, gz - a.z) > 4) {
-          setGoal(w, a, gx, gy, gz);
-          // Cover long distances briskly (still under the running-suspicion threshold).
-          a.maxSpeed = sc.band === 'near' ? CONFIG.movement.walkSpeed : A.hurrySpeed;
-        } else {
-          this.blend(dt, 10);
-        }
-      } else if (this.idling) {
+      const sc = this.scan;
+      if (this.idling) {
         this.blend(dt, 12);
         // Scan the crowd in the direction the scanner pointed.
-        if (a.pose !== 'sit' && w.rng.chance(0.08)) a.faceYaw = dirToYaw(this.scan.dx, this.scan.dz) + w.rng.range(-0.7, 0.7);
+        if (a.pose !== 'sit' && w.rng.chance(0.08)) a.faceYaw = dirToYaw(sc.dx, sc.dz) + w.rng.range(-0.7, 0.7);
+      } else if (!a.hasGoal) {
+        const poi = a.occupiedPoi >= 0 ? w.layout.pois[a.occupiedPoi] : null;
+        const atPoi = !!poi && Math.hypot(a.x - poi.x, a.z - poi.z) < 1.2;
+        if (atPoi || (sc.reached && w.rng.chance(A.searchBlendChance))) {
+          // Act like a commuter around here for a bit: a bench, the paper, the board.
+          this.blend(dt, 12, A.searchBlendMin, A.searchBlendMax);
+        } else {
+          // Wander around where the scanner pointed, looking at people.
+          sc.reached = true;
+          w.releasePoi(a);
+          const est = sc.band === 'near' ? Math.min(sc.dist, 8) : sc.band === 'mid' ? 26 : 55;
+          const gx = sc.x + sc.dx * est + w.rng.range(-4, 4);
+          const gz = sc.z + sc.dz * est + w.rng.range(-4, 4);
+          const gy = Math.abs(sc.dy) > 2.5 ? a.y + sc.dy : a.y;
+          if (Math.hypot(gx - a.x, gz - a.z) > 4) {
+            setGoal(w, a, gx, gy, gz);
+            // Cover long distances briskly (still under the running-suspicion threshold).
+            a.maxSpeed = sc.band === 'near' ? CONFIG.movement.walkSpeed : A.hurrySpeed;
+          } else {
+            this.blend(dt, 10);
+          }
+        }
       }
       return;
     }
@@ -337,7 +352,7 @@ export class SpyBrain {
   }
 
   /** Behave like a civilian: walk to a POI, linger a little. */
-  private blend(dt: number, near: number): void {
+  private blend(dt: number, near: number, minT = 3, maxT = 9): void {
     const a = this.a, w = this.w;
     a.maxSpeed = CONFIG.movement.walkSpeed;
     if (this.idling) {
@@ -348,7 +363,7 @@ export class SpyBrain {
     if (!a.hasGoal) {
       if (a.occupiedPoi >= 0 && Math.hypot(a.x - w.layout.pois[a.occupiedPoi].x, a.z - w.layout.pois[a.occupiedPoi].z) < 1.2) {
         this.idling = true;
-        this.idleTimer = startActivity(w, a, 3, 9);
+        this.idleTimer = startActivity(w, a, minT, maxT);
       } else {
         w.releasePoi(a);
         a.faceYaw = NaN;

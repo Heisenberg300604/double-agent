@@ -3,6 +3,8 @@
 export type AgentKind = 'civilian' | 'spy';
 export type Pose = 'stand' | 'sit' | 'dead';
 export type MoveMode = 'walk' | 'run' | 'crouch';
+/** Standing idle activity at a point of interest (reading, phone/coffee, looking up at the board). */
+export type Activity = 'none' | 'read' | 'phone' | 'look';
 
 export type BagKind = 'none' | 'briefcase' | 'shoulder' | 'backpack';
 /** 0 short, 1 long, 2 tied back, 3 shaved. */
@@ -50,12 +52,14 @@ export interface SpyIntent {
   scanner: boolean;
   disguise: boolean;
   smoke: boolean;
+  /** Use the interactable in front of you (sit, stand up, start or stop an activity). */
+  interact: boolean;
 }
 
 export function emptyIntent(): SpyIntent {
   return {
     moveX: 0, moveZ: 0, mode: 'walk', jump: false, yaw: 0, pitch: 0,
-    aim: false, fire: false, reload: false, scanner: false, disguise: false, smoke: false,
+    aim: false, fire: false, reload: false, scanner: false, disguise: false, smoke: false, interact: false,
   };
 }
 
@@ -132,6 +136,12 @@ export interface Agent {
   seatX: number;
   seatY: number;
   seatZ: number;
+  /** Standing idle activity at the occupied POI. */
+  activity: Activity;
+  /** Seconds spent seated or in the current activity (the blending bonus caps on this). */
+  blendTimer: number;
+  /** Movement lock while standing up from a seat (s). */
+  standLock: number;
   /** Walk cycle phase (radians). */
   animPhase: number;
   alive: boolean;

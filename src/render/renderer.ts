@@ -10,6 +10,7 @@ import { TrainRenderer } from './trains';
 import { Atmosphere } from './atmosphere';
 import { QualityScaler } from './quality';
 import { Viewmodel } from './viewmodel';
+import type { Activity } from '../sim/types';
 
 export type QualityLevel = 'low' | 'medium' | 'high';
 export type QualitySetting = 'auto' | QualityLevel;
@@ -36,6 +37,8 @@ export interface FrameOptions {
   moveSpeed: number;
   running: boolean;
   showViewmodel: boolean;
+  /** The player's standing activity: shows the item (paper, phone) in the left hand. */
+  activity: Activity;
 }
 
 const FOG_COLOR = 0x0d0c0f;
@@ -195,6 +198,7 @@ export class GameRenderer {
     const vh = this.renderer.domElement.height;
     this.atmosphere.update(performance.now() / 1000, vh, this.camera.fov, this.effects.particleScale);
     this.trains.update(world.trains.trains, this.hideTrainsBeyond);
+    this.viewmodel.setActivity(o.showViewmodel && !o.drawn ? o.activity : 'none');
     this.viewmodel.update(o.dt, o.drawn && o.showViewmodel, o.aiming, o.reloadProgress, o.moveSpeed, o.running, this.camera.aspect, this.fov * 0.85);
 
     const r = this.renderer;

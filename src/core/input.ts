@@ -11,12 +11,20 @@ export class Input {
   private lmbPressed = false;
   locked = false;
   onLockChange: (locked: boolean) => void = () => {};
+  /** Escape pressed, or the browser refused to capture the mouse. */
+  onRelease: () => void = () => {};
   private readonly target: HTMLElement;
 
   constructor(target: HTMLElement) {
     this.target = target;
     window.addEventListener('keydown', (e) => {
-      if (['Tab', 'Space', 'ControlLeft', 'ControlRight', 'F3', 'KeyQ', 'KeyE', 'KeyF', 'KeyR'].includes(e.code) && this.locked) e.preventDefault();
+      // Release the mouse ourselves on Escape. Some browsers (Chrome on macOS with
+      // raw mouse input) can leave the cursor captured even after the lock "ends".
+      if (e.code === 'Escape') {
+        this.exitLock();
+        this.onRelease();
+      }
+      if (['Tab', 'Space', 'ControlLeft', 'ControlRight', 'F3', 'KeyQ', 'KeyE', 'KeyF', 'KeyG', 'KeyR'].includes(e.code) && this.locked) e.preventDefault();
       if (e.code === 'Tab' || e.code === 'F3') e.preventDefault();
       if (!this.down.has(e.code)) this.pressed.add(e.code);
       this.down.add(e.code);
@@ -55,10 +63,25 @@ export class Input {
       }
       this.onLockChange(this.locked);
     });
+    // A refused capture (e.g. clicking Resume within Chrome's ~1 s cooldown after
+    // Escape) must not leave the game running with a free, useless cursor.
+    document.addEventListener('pointerlockerror', () => {
+      this.locked = false;
+      this.onRelease();
+    });
   }
 
   requestLock(): void {
     const el = this.target as HTMLElement & { requestPointerLock: (o?: unknown) => Promise<void> | void };
+    if (document.pointerLockElement === el) return;
+    // Raw (unaccelerated) mouse input is skipped on macOS: there it can leave the
+    // cursor frozen after Escape releases the lock.
+    const mac = /Mac/i.test(navigator.platform || navigator.userAgent);
+    if (mac) {
+      const r = el.requestPointerLock();
+      if (r && typeof (r as Promise<void>).catch === 'function') (r as Promise<void>).catch(() => this.onRelease());
+      return;
+    }
     try {
       const r = el.requestPointerLock({ unadjustedMovement: true });
       if (r && typeof (r as Promise<void>).catch === 'function') {
@@ -77,6 +100,9 @@ export class Input {
 
   exitLock(): void {
     if (document.pointerLockElement) document.exitPointerLock();
+    this.locked = false;
+    this.lmb = this.rmb = false;
+    this.down.clear();
   }
 
   isDown(code: string): boolean {

@@ -28,6 +28,10 @@ export interface HudState {
   hasTarget: boolean;
   scanner: { angle: number; band: string; floor: string } | null;
   revealed: boolean;
+  /** Interact prompt text (shown as "[G] text"), or null to hide it. */
+  prompt: string | null;
+  /** Seated or busy with an activity and still getting the blending bonus. */
+  blending: boolean;
 }
 
 export interface ScoreRow {
@@ -69,6 +73,8 @@ export class Hud {
   private readonly scanFloor = $('#scanner .floor');
   private readonly center = $('#center-msg');
   private readonly revealed = $('#revealed');
+  private readonly prompt = $('#interact');
+  private readonly promptText = $('#interact .text');
   private readonly death = $('#death');
   private readonly deathBy = $('#death-by');
   private readonly deathTimer = $('#death-timer');
@@ -201,6 +207,11 @@ export class Hud {
       if (this.changed('floor', s.scanner.floor)) this.scanFloor.textContent = s.scanner.floor;
     }
     if (this.changed('rev', s.revealed)) this.revealed.classList.toggle('hidden', !s.revealed);
+    if (this.changed('prompt', s.prompt ?? '')) {
+      this.prompt.classList.toggle('hidden', !s.prompt);
+      if (s.prompt) this.promptText.textContent = s.prompt;
+    }
+    if (this.changed('blend', s.blending)) this.susp.classList.toggle('blending', s.blending);
 
     // Timed elements.
     if (this.hitTimer > 0) {

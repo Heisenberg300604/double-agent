@@ -5,12 +5,13 @@ import { CONFIG } from '../config';
 import type { Agent } from '../sim/types';
 import type { World } from '../sim/world';
 import { clearGoal, setGoal } from './steering';
+import { activityFor } from '../sim/interact';
 
 const C = CONFIG.civilian;
 
 /** Choose a free POI and path to it. Shared with blending spies. */
 export function pickPoi(w: World, a: Agent, preferNear = 0): boolean {
-  for (let tries = 0; tries < 8; tries++) {
+  for (let tries = 0; tries < (preferNear > 0 ? 16 : 8); tries++) {
     const p = w.nav.pois[w.rng.int(w.nav.pois.length)];
     if (w.poiOccupant[p.id] >= 0) continue;
     if (p.kind === 'chat' && !w.rng.chance(C.chatChance * 2)) continue;
@@ -25,6 +26,7 @@ export function pickPoi(w: World, a: Agent, preferNear = 0): boolean {
   return setGoal(w, a, node.x, node.y, node.z);
 }
 
+/** Leave the seat (back to the POI's standing spot) and drop any activity. */
 export function standUp(w: World, a: Agent): void {
   if (a.pose === 'sit') {
     a.pose = 'stand';
@@ -35,6 +37,8 @@ export function standUp(w: World, a: Agent): void {
       a.z = p.z;
     }
   }
+  a.activity = 'none';
+  a.blendTimer = 0;
 }
 
 /** Arrived at the claimed POI: start the activity. Returns idle duration. */
@@ -46,6 +50,10 @@ export function startActivity(w: World, a: Agent, minT: number, maxT: number): n
     a.seatX = p.seat.x;
     a.seatY = p.seat.y;
     a.seatZ = p.seat.z;
+    a.blendTimer = 0;
+  } else if (p && !p.seat) {
+    a.activity = activityFor(p.kind);
+    a.blendTimer = 0;
   }
   return w.rng.range(minT, maxT);
 }

@@ -9,6 +9,7 @@ import { AudioEngine } from './audio/audio';
 import { GameRenderer, type CameraPose } from './render/renderer';
 import { describeAppearance } from './sim/appearance';
 import { bandOf } from './sim/gadgets';
+import { interactLabel } from './sim/interact';
 import { eyeHeight } from './sim/movement';
 import { ordinal, rankOf } from './sim/scoring';
 import { emptyIntent, type Agent, type SimEvent } from './sim/types';
@@ -70,6 +71,9 @@ class Game {
     this.input = new Input(document.body);
     this.input.onLockChange = (locked) => {
       if (!locked && this.state === 'playing') this.pause();
+    };
+    this.input.onRelease = () => {
+      if (this.state === 'playing') this.pause();
     };
     this.audio.setVolume(this.settings.volume);
 
@@ -334,6 +338,7 @@ class Game {
     it.scanner = inp.consume('KeyQ');
     it.disguise = inp.consume('KeyE');
     it.smoke = inp.consume('KeyF');
+    it.interact = inp.consume('KeyG');
   }
 
   // ---------------------------------------------------------------- events → HUD / FX / audio
@@ -521,6 +526,7 @@ class Game {
       moveSpeed: me?.speed ?? 0,
       running: playing && !!sp?.running,
       showViewmodel: playing,
+      activity: playing && me ? me.activity : 'none',
     });
     this.renderMs += (performance.now() - r0 - this.renderMs) * 0.05;
     this.audio.update(dt);
@@ -565,6 +571,10 @@ class Game {
     if (s.suspicion >= CONFIG.suspicion.exposed) this.hint('exposed', 'You are EXPOSED: your hunter sees you outlined in red. Walk calmly to cool off.');
     if (tgt && tgt.alive && tgt.spy!.suspicion >= CONFIG.suspicion.exposed) this.hint('outline', 'Your target is exposed — the red outline gives them away.');
     if (this.matchTime > 40 && s.cdDisguise === 0) this.hint('gadgets', 'Feel watched? E changes your suit, F throws smoke that blocks sight.');
+    const t = this.world.playerInteractable;
+    if (t && t.kind === 'sit') this.hint('sit', 'Press G to sit. Seated agents look harmless and cool off faster.');
+    if (t && t.kind === 'activity') this.hint('activity', 'Press G to blend in here: reading or waiting cools suspicion faster.');
+    if (me.blendTimer > CONFIG.interact.blendBonusSeconds && this.world.isBlending(me)) this.hint('blendcap', 'Lingering too long in one spot stops helping. Move on.');
   }
 
   private remoteFootsteps(dt: number): void {
@@ -621,6 +631,8 @@ class Game {
       hasTarget: !!tgt,
       scanner,
       revealed: s.revealTimer > 0,
+      prompt: me.alive && w.playerInteractable ? `${interactLabel(w.playerInteractable, w)}` : null,
+      blending: me.alive && w.blendBonus(me) !== 'none',
     }, dt);
 
     this.hud.setDeath(!me.alive, this.deathBy, s.respawnTimer);
