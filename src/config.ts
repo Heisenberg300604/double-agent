@@ -255,6 +255,10 @@ export const CONFIG = {
     cullSmoothing: 0.06,
     /** Map chunk size (m) for culling. */
     mapChunk: 16,
+    /** People farther than this (m) are drawn with the cheaper box body. */
+    crowdLodDistance: 35,
+    /** Seconds to sit down or stand up (render blend). */
+    sitBlendSeconds: 0.45,
   },
 
   quality: {

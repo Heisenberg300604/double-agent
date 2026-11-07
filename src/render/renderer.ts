@@ -99,7 +99,7 @@ export class GameRenderer {
     this.atmosphere = new Atmosphere(world.layout);
     this.scene.add(this.atmosphere.group);
     this.crowd = new CrowdRenderer(world.agents.length + 4, world.layout.pois);
-    this.scene.add(this.crowd.shadows, this.crowd.mesh, this.crowd.outline);
+    this.scene.add(this.crowd.shadows, this.crowd.mesh, this.crowd.far, this.crowd.outline);
     this.scene.add(this.effects.group);
 
     this.createRenderer(true);
@@ -198,8 +198,8 @@ export class GameRenderer {
     // Predictive view culling: only the map chunks and people in (or about to enter) the view.
     this.cull.update(cam, o.dt, this.camera.fov, this.camera.aspect, this.camera.far);
     this.chunksDrawn = cullMapChunks(this.map.chunks, (b) => this.cull.boxVisible(b));
-    this.crowd.update(world.agents, o.alpha, o.hideId, o.outlined, performance.now() / 1000, (x, y, z, r) => this.cull.sphereVisible(x, y, z, r));
-    this.agentsDrawn = this.crowd.mesh.count;
+    this.crowd.update(world.agents, o.alpha, o.hideId, o.outlined, performance.now() / 1000, (x, y, z, r) => this.cull.sphereVisible(x, y, z, r), this.camera.position);
+    this.agentsDrawn = this.crowd.mesh.count + this.crowd.far.count;
     this.effects.update(o.dt, world.smokes, o.revealed, this.camera.position);
     this.stationMinutes += o.dt / 60;
     this.map.board.update(this.stationMinutes, o.dt);
