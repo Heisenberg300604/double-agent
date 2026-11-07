@@ -454,7 +454,7 @@ export class CrowdRenderer {
    * Write all visible humans. `outlined` lists agent ids that get the red outline.
    * `hideId` is the first-person player.
    */
-  update(agents: readonly Agent[], alpha: number, hideId: number, outlined: readonly number[], time: number): void {
+  update(agents: readonly Agent[], alpha: number, hideId: number, outlined: readonly number[], time: number, visible?: (x: number, y: number, z: number, r: number) => boolean): void {
     this.uTime.value = time;
     let n = 0;
     let s = 0;
@@ -464,6 +464,9 @@ export class CrowdRenderer {
       this.instanceOf[a.id] = -1;
       if (a.id === hideId) continue;
       if (!a.alive && a.deadTime > (a.spy ? linger : civLinger)) continue;
+      if (a.away) continue;
+      // Outside the (predicted) view: skip the instance and its shadow.
+      if (visible && !visible(a.x, a.y + 0.9, a.z, 1.3)) continue;
       this.writeInstance(this.buf, this.mesh, n, a, alpha);
       this.instanceOf[a.id] = n;
       n++;

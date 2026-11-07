@@ -617,6 +617,7 @@ class Game {
       this.hud.setDebug(
         `FPS ${(1000 / this.frameMs).toFixed(0)} (avg ${r.scaler.averageFps().toFixed(0)})  frame ${this.frameMs.toFixed(2)} ms  sim ${this.simMs.toFixed(2)} ms  render ${this.renderMs.toFixed(2)} ms\n` +
         `draw calls ${r.drawCalls}  tris ${(r.triangles / 1000).toFixed(1)}k  scale ${r.renderScale.toFixed(2)}  quality ${r.setting}/${r.level}\n` +
+        `culling: people ${r.agentsDrawn}/${w.agents.length}  map chunks ${r.map.chunks.length ? `${r.chunksDrawn}/${r.map.chunks.length}` : 'off (no multi-draw)'}  turn ${r.cull.yawVel.toFixed(1)} rad/s\n` +
         `agents ${w.agents.length}  spies ${w.spies.length}  seed ${this.seed}\n` +
         `sim ${this.measuredTps.toFixed(1)} ticks/s (target ${CONFIG.sim.tickRate})  player ${this.measuredSpeed.toFixed(2)} m/s (walk ${CONFIG.movement.walkSpeed}, run ${CONFIG.movement.runSpeed})`,
       );

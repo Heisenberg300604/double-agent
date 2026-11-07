@@ -103,8 +103,64 @@ src/
   - Lighting uses no shadow maps: blob shadows go under each character, plus 3 point lights and fog.
   - Effects are pooled buffers, one draw call each.
   - The auto-quality scaler lowers the render scale (1.0 → 0.85 → 0.7) when the 2 s average FPS drops below 50, and raises it again after 5 s above 58.
+  - Predictive view culling: only map chunks and people inside the current view or the view 0.25 s ahead (extrapolated from mouse turning and movement) are drawn. F3 shows how many.
 - **Trains.** Train movement runs inside the simulation (`sim/trains.ts`), deterministic per seed. Each track cycles through away → arriving (constant deceleration to the buffers) → dwell (doors open) → departing. Moving cars block sight and bullets, and block or kill anyone on their bed. The track beds are real pits 1.2 m below the platforms. Movement-only guards keep civilians and AI spies off them without blocking sight lines across them. Announcements, door beeps, braking and horns are driven by the train events.
 - **Collision.** Agents are circles with a height, tested against AABBs in a 4 m uniform grid. Stairs are ramps. Shooting uses a hitscan raycast against head spheres, body boxes and the AABB grid. It never touches render meshes.
+
+## How it works in production
+
+Double Agent is a static single-page app. There is no game server: the whole simulation, the AI and the rendering run in the player's browser. `npm run build` produces `dist/` (one HTML file with inline CSS, one hashed JS bundle, and the audio clips), which any static host can serve. The code reports page views with Vercel Web Analytics, so Vercel is the expected host.
+
+```mermaid
+flowchart LR
+  subgraph Host["Static host / CDN"]
+    HTML["index.html<br/>inline CSS + loading screen"]
+    JS["assets/index-[hash].js<br/>Three.js + game, ~200 KB gzip"]
+    AUD["audio/*.ogg | *.m4a<br/>14 CC0 clips, ~140 KB"]
+  end
+  subgraph Browser
+    BOOT["Boot<br/>build map, renderer, title"] --> LOOP
+    subgraph LOOP["Frame loop (requestAnimationFrame)"]
+      IN["Input<br/>keyboard, mouse, pointer lock"] --> SIM
+      SIM["Simulation, fixed 60 Hz<br/>World: movement, combat, trains,<br/>per-observer suspicion"] --> AI["AI, 10 Hz staggered<br/>civilians + spy brains"]
+      AI --> SIM
+      SIM -- "plain data + events" --> R["Renderer<br/>predictive view culling,<br/>map chunks, instanced crowd,<br/>trains, effects, gun pass"]
+      SIM -- events --> A["Web Audio<br/>samples or synthesis,<br/>station reverb"]
+      SIM -- state --> HUD["HTML HUD"]
+    end
+    LS[("localStorage<br/>settings")]
+  end
+  HTML --> BOOT
+  JS --> BOOT
+  AUD -. "fetched after the title screen" .-> A
+  LS <--> BOOT
+  Browser -. "page views" .-> VA["Vercel Web Analytics"]
+```
+
+**Loading.** The browser fetches `index.html`, then the JS bundle. The bundle builds the station, the renderer and the title screen (about 0.3 s on Apple silicon). 300 ms after the title appears it starts fetching the audio clips: Ogg Vorbis where the browser supports it, AAC (`.m4a`) otherwise (Safari). They are decoded once the player clicks Play and the audio context starts. Until then, or if they fail to load, every sound is synthesised.
+
+**One frame.**
+1. Input is read. Presses are edge-triggered and consumed once per simulation tick.
+2. The simulation advances in fixed 1/60 s ticks (up to 10 catch-up ticks per frame). Trains move first, then AI thinking (each agent at 10 Hz, staggered), spy actions, movement and collision, then suspicion: each agent judges only what it can see at its own look. The simulation never imports Three.js; it emits plain events.
+3. Events drive the HUD, the effects and the audio.
+4. The renderer interpolates every agent and train between the last two ticks. It builds two widened view frusta (now, and 0.25 s ahead from the turn rate and movement), draws only the map chunks and people inside them, then draws the gun in its own pass.
+
+**Rendering cost control.** The map is one draw call per material group. Where the browser supports `WEBGL_multi_draw`, each group is a `BatchedMesh` of ~16 m chunks, so off-screen chunks are skipped without extra draw calls. Without it, the map falls back to plain merged meshes and is drawn whole. The crowd is one instanced draw call, and only people inside the predicted view are written into it. The auto-quality scaler lowers the render scale when the frame rate drops.
+
+**State and privacy.** Settings live in `localStorage`. Nothing about a match leaves the browser: no accounts, no saves, no leaderboards. The only network traffic after load is the audio clips and the analytics page view.
+
+**Caching.** The JS bundle is content-hashed, so it can be cached forever. `index.html` and `audio/*` keep fixed names, so they should be served with revalidation (short max-age or ETags) so updates reach players.
+
+**Failure modes.**
+
+| If… | then… |
+|---|---|
+| audio clips are blocked or offline | synthesised sounds play instead |
+| `WEBGL_multi_draw` is missing | the map renders unchunked (no map culling; the crowd is still culled) |
+| the browser refuses pointer lock (e.g. clicking Resume within ~1 s of Escape) | the game shows the pause menu instead of running with a free cursor |
+| the frame rate drops below 50 | the render scale steps down (1.0 → 0.85 → 0.7) |
+
+**Toward multiplayer.** Because the simulation is plain data driven by `SpyIntent`s, a Node server could run `World` unchanged as the authority: clients would send intents, the server would step at 60 Hz and broadcast snapshots and events, and clients would keep only the renderer, HUD and audio. Nothing in production does this yet.
 
 ## Measured
 

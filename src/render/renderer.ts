@@ -5,7 +5,8 @@ import { CONFIG } from '../config';
 import type { World } from '../sim/world';
 import { CrowdRenderer } from './crowd';
 import { Effects } from './effects';
-import { buildEnvironment, buildMapMeshes, createMapMaterials, type MapVisuals } from './mapMesh';
+import { buildEnvironment, buildMapMeshes, createMapMaterials, cullMapChunks, supportsMultiDraw, type MapVisuals } from './mapMesh';
+import { ViewCull } from './viewCull';
 import { TrainRenderer } from './trains';
 import { Atmosphere } from './atmosphere';
 import { QualityScaler } from './quality';
@@ -66,6 +67,10 @@ export class GameRenderer {
   private fov: number = CONFIG.weapon.fovNormal;
   drawCalls = 0;
   triangles = 0;
+  readonly cull = new ViewCull();
+  /** For the F3 overlay: map chunks and crowd instances actually drawn. */
+  chunksDrawn = 0;
+  agentsDrawn = 0;
 
   constructor(container: HTMLElement, world: World) {
     this.container = container;
@@ -86,7 +91,7 @@ export class GameRenderer {
       this.scene.add(p);
     }
 
-    this.map = buildMapMeshes(world.layout, createMapMaterials());
+    this.map = buildMapMeshes(world.layout, createMapMaterials(), supportsMultiDraw());
     this.scene.add(this.map.group);
     this.trains = new TrainRenderer(world.layout, this.map);
     this.scene.add(this.trains.group);
@@ -190,7 +195,11 @@ export class GameRenderer {
     this.camera.position.set(cam.x, cam.y, cam.z);
     this.camera.rotation.set(cam.pitch, cam.yaw, cam.roll);
 
-    this.crowd.update(world.agents, o.alpha, o.hideId, o.outlined, performance.now() / 1000);
+    // Predictive view culling: only the map chunks and people in (or about to enter) the view.
+    this.cull.update(cam, o.dt, this.camera.fov, this.camera.aspect, this.camera.far);
+    this.chunksDrawn = cullMapChunks(this.map.chunks, (b) => this.cull.boxVisible(b));
+    this.crowd.update(world.agents, o.alpha, o.hideId, o.outlined, performance.now() / 1000, (x, y, z, r) => this.cull.sphereVisible(x, y, z, r));
+    this.agentsDrawn = this.crowd.mesh.count;
     this.effects.update(o.dt, world.smokes, o.revealed, this.camera.position);
     this.stationMinutes += o.dt / 60;
     this.map.board.update(this.stationMinutes, o.dt);

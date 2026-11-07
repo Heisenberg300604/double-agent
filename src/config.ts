@@ -244,6 +244,17 @@ export const CONFIG = {
   render: {
     maxPixelRatio: 1.5,
     viewDistance: 230,
+    /** View culling: how far ahead (s) to predict the view from turning and moving. */
+    cullLookahead: 0.25,
+    /** Extra field of view (degrees) on both culling frusta. */
+    cullMarginDeg: 12,
+    /** Anything this close (m, Manhattan) is always drawn. */
+    cullNearRadius: 4,
+    /** Turn-rate cap for prediction (rad/s) and smoothing time constant (s). */
+    cullMaxTurn: 10,
+    cullSmoothing: 0.06,
+    /** Map chunk size (m) for culling. */
+    mapChunk: 16,
   },
 
   quality: {
