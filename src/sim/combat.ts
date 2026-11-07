@@ -57,7 +57,7 @@ export function raycastAgents(w: World, ox: number, oy: number, oz: number, dx: 
   let best: AgentRayHit | null = null;
   let bestT = maxT;
   for (const a of w.agents) {
-    if (!a.alive || a.id === ignore) continue;
+    if (!a.alive || a.away || a.id === ignore) continue;
     // Quick reject: distance from agent axis to the ray in XZ.
     const px = a.x - ox, pz = a.z - oz;
     const along = px * dx + pz * dz;

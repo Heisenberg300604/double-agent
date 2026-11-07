@@ -93,6 +93,20 @@ export class SpyBrain {
     this.a.spy!.intent.aim = false;
   }
 
+  /** A spy vanished (rode a train out): drop everything we believed about them. */
+  forget(spyId: number): void {
+    this.belief.delete(spyId);
+    this.follow.delete(spyId);
+    if (this.chosen === spyId) {
+      this.chosen = -1;
+      this.confidence = 0;
+    }
+    if (this.strikeId === spyId || this.state === 'stalk') {
+      this.endStrike();
+      this.setState('search');
+    }
+  }
+
   onSpyDisguised(spyId: number): void {
     if (spyId === this.targetId) {
       // Lose the lock on the target.

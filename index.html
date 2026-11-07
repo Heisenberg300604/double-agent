@@ -162,6 +162,12 @@
       #interact { position: absolute; bottom: 150px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 8px; padding: 6px 12px 6px 8px; font-size: 14px; letter-spacing: 0.5px; color: var(--text); }
       #interact kbd { font: 600 12px var(--mono); color: var(--bg); background: var(--brass); border-radius: 3px; padding: 2px 6px; }
       #susp.blending:not(.exposed) .fill { background: var(--ok); }
+      #ride { position: absolute; inset: 0; display: grid; place-items: center; background: #050406; opacity: 0; visibility: hidden; transition: opacity 0.9s, visibility 0s 0.9s; }
+      #ride.show { opacity: 1; visibility: visible; transition: opacity 0.9s; }
+      #ride .card { text-align: center; padding: 22px 30px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+      #ride .kicker { font: 600 11px var(--sans); letter-spacing: 3px; color: var(--brass); text-transform: uppercase; }
+      #ride .title { font: 600 26px var(--serif); letter-spacing: 1px; margin: 10px 0 6px; }
+      #ride .eta { font: 15px var(--mono); color: var(--muted); }
       @media (max-width: 720px) {
         #killfeed { width: 60vw; }
         #dossier { top: 86px; width: 180px; }
@@ -207,6 +213,7 @@
         <div id="scoreboard" class="chip hidden"><table><thead><tr><th>Agent</th><th class="num">Kills</th><th class="num">Deaths</th><th class="num">Civilians</th><th class="num">Score</th></tr></thead><tbody></tbody></table></div>
         <div id="debug" class="chip hidden"></div>
         <div id="toast" class="hidden"></div>
+        <div id="ride"><div class="card"><div class="kicker">Off the map</div><div class="title"></div><div class="eta"></div></div></div>
       </div>
 
       <div id="menu-title" class="screen hidden">
@@ -234,7 +241,7 @@
             <kbd>WASD</kbd><span>Walk · <kbd>Shift</kbd> run · <kbd>C</kbd>/<kbd>Ctrl</kbd> crouch · <kbd>Space</kbd> jump</span>
             <kbd>RMB</kbd><span>Draw &amp; aim · <kbd>LMB</kbd> fire · <kbd>R</kbd> reload</span>
             <kbd>Q E F</kbd><span>Scanner · Disguise · Smoke</span>
-            <kbd>G</kbd><span>Interact: sit, read the paper, check the board</span>
+            <kbd>G</kbd><span>Interact: sit, read the paper, drop to the tracks, climb up, board a train</span>
             <kbd>Tab</kbd><span>Scoreboard · <kbd>Esc</kbd> pause · <kbd>F3</kbd> debug</span>
           </div>
           <div class="btns"><button class="primary" data-action="howto-done">Got it</button></div>

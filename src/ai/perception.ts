@@ -28,6 +28,6 @@ export function lineOfSight(w: World, obs: Agent, target: Agent): boolean {
 }
 
 export function canSee(w: World, obs: Agent, target: Agent, range: number = RANGE): boolean {
-  if (!target.alive && target.pose !== 'dead') return false;
+  if ((!target.alive && target.pose !== 'dead') || target.away || obs.away) return false;
   return inViewCone(obs, target, range) && lineOfSight(w, obs, target);
 }

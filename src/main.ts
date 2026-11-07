@@ -276,13 +276,41 @@ class Game {
     this.audio.announce(general[this.announceIdx++ % general.length]);
   }
 
+  /** Destination and origin names for a service (shared by the PA and the ride card). */
+  private serviceNames(track: number, service: number): { dest: string; from: string } {
+    const dests = ['Northgate', 'Halvern Bay', 'Castlemere', 'Orrin Fields', 'Saltworth', 'Kings Vale', 'Ashcombe', 'Mirelow', 'Brandish Cross', 'Westerly'];
+    return { dest: dests[(service * 3 + track * 5) % dests.length], from: dests[(service * 7 + track * 2 + 4) % dests.length] };
+  }
+
+  private rideTitle = '';
+
+  private onRide(e: Extract<SimEvent, { type: 'ride' }>): void {
+    if (e.agent !== this.world.player!.id) return;
+    const plat = this.world.layout.tracks[e.track].platforms.join(' / ');
+    switch (e.phase) {
+      case 'board':
+        this.hud.centerMessage('Aboard', false, 1.5);
+        this.hint('ride', 'Stay aboard when the doors close to ride out: your hunter loses your trail, but the clock keeps running.');
+        break;
+      case 'away': {
+        const m = Math.floor(this.renderer.stationMinutes) % (24 * 60);
+        const hhmm = `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+        this.rideTitle = `Riding the ${hhmm} to ${this.serviceNames(e.track, e.service).dest}`;
+        break;
+      }
+      case 'return':
+        this.hud.centerMessage(`Back at platform ${plat} — your hunter lost your trail`, false, 3.5);
+        break;
+      case 'alight':
+        break;
+    }
+  }
+
   /** Station announcements and sounds driven by the simulation's train events. */
   private onTrain(e: Extract<SimEvent, { type: 'train' }>): void {
-    const dests = ['Northgate', 'Halvern Bay', 'Castlemere', 'Orrin Fields', 'Saltworth', 'Kings Vale', 'Ashcombe', 'Mirelow', 'Brandish Cross', 'Westerly'];
     const tr = this.world.layout.tracks[e.track];
     const plat = tr.platforms.join(' and ');
-    const dest = dests[(e.service * 3 + e.track * 5) % dests.length];
-    const from = dests[(e.service * 7 + e.track * 2 + 4) % dests.length];
+    const { dest, from } = this.serviceNames(e.track, e.service);
     const zc = (tr.z0 + tr.z1) / 2;
     const mid = { x: tr.stopX + 30, y: 2, z: zc };
     const T = CONFIG.trains;
@@ -423,6 +451,9 @@ class Game {
           break;
         case 'mantle':
           if (e.agent === me.id) this.audio.footstep(undefined, true);
+          break;
+        case 'ride':
+          this.onRide(e);
           break;
         case 'jump':
         case 'smokeThrow':
@@ -596,6 +627,7 @@ class Game {
     if (t && t.kind === 'activity') this.hint('activity', 'Press G to blend in here: reading or waiting cools suspicion faster.');
     if (t && t.kind === 'drop') this.hint('drop', 'G drops you to the tracks: a hidden route if you crouch, but suspicious, and trains kill.');
     if (t && t.kind === 'climb') this.hint('climb', 'Space or G climbs back up to the platform.');
+    if (t && t.kind === 'board') this.hint('board', 'Press G to board. Ride the train out to shake your hunter.');
     if (me.blendTimer > CONFIG.interact.blendBonusSeconds && this.world.isBlending(me)) this.hint('blendcap', 'Lingering too long in one spot stops helping. Move on.');
   }
 
@@ -655,6 +687,7 @@ class Game {
       revealed: s.revealTimer > 0,
       prompt: me.alive && w.playerInteractable ? `${interactLabel(w.playerInteractable, w)}` : null,
       blending: me.alive && w.blendBonus(me) !== 'none',
+      ride: me.alive && me.away ? { title: this.rideTitle, eta: w.rideEta(me) } : null,
     }, dt);
 
     this.hud.setDeath(!me.alive, this.deathBy, s.respawnTimer);

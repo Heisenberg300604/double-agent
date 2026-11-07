@@ -7,7 +7,7 @@ import type { PoiKind } from '../world/mapData';
 import type { Activity, Agent } from './types';
 import type { World } from './world';
 
-export type InteractKind = 'sit' | 'activity' | 'stand' | 'stop' | 'climb' | 'drop';
+export type InteractKind = 'sit' | 'activity' | 'stand' | 'stop' | 'climb' | 'drop' | 'board' | 'alight';
 
 export interface Interactable {
   kind: InteractKind;
@@ -17,6 +17,10 @@ export interface Interactable {
   x?: number;
   y?: number;
   z?: number;
+  /** Train (track index) for board / alight and for seats inside a train (poi is then the seat index). */
+  train?: number;
+  /** Door index in the train layout, for board / alight. */
+  door?: number;
 }
 
 const EDGE_COS = Math.cos((CONFIG.tracks.edgeConeDeg * Math.PI) / 180);
@@ -84,6 +88,8 @@ export function interactLabel(t: Interactable, w: World): string {
     case 'stop': return 'Stop';
     case 'climb': return 'Climb up';
     case 'drop': return 'Drop to the tracks';
+    case 'board': return 'Board train';
+    case 'alight': return 'Step off';
     case 'activity': {
       const act = t.poi >= 0 ? activityFor(w.layout.pois[t.poi].kind) : 'none';
       return act === 'read' ? 'Read the paper' : act === 'look' ? 'Check the board' : 'Wait here';
@@ -95,7 +101,41 @@ export function interactLabel(t: Interactable, w: World): string {
  * The best free seat or activity spot within `interact.range` of the agent and
  * within the look cone. Score prefers close spots that are straight ahead.
  */
+/** Can people get on and off this train right now? */
+export function doorsOpen(w: World, track: number): boolean {
+  const s = w.trains.trains[track];
+  return s.phase === 'dwell' && s.doors >= CONFIG.trains.boardDoors;
+}
+
+/** Aboard a train: a free seat or an open door, in train-local space. */
+function findAboard(w: World, a: Agent): Interactable | null {
+  const R = CONFIG.interact.range;
+  const fx = -Math.sin(a.yaw), fz = -Math.cos(a.yaw);
+  const car = w.carLayouts[a.aboard];
+  let best: Interactable | null = null;
+  let bestScore = Infinity;
+  const consider = (tx: number, tz: number, it: Interactable): void => {
+    const dx = tx - a.localX, dz = tz - a.z;
+    const d = Math.hypot(dx, dz);
+    if (d > R) return;
+    const cos = d < 0.4 ? 1 : (dx * fx + dz * fz) / d;
+    if (cos < CONE_COS) return;
+    const score = d + (1 - cos) * 2;
+    if (score < bestScore) {
+      bestScore = score;
+      best = it;
+    }
+  };
+  const occ = w.trainSeatOccupant[a.aboard];
+  car.seats.forEach((s, i) => {
+    if (occ[i] < 0 || occ[i] === a.id) consider(s.x, s.z, { kind: 'sit', poi: i, train: a.aboard });
+  });
+  if (doorsOpen(w, a.aboard)) car.doors.forEach((d, i) => consider(d.x, d.z, { kind: 'alight', poi: -1, train: a.aboard, door: i }));
+  return best;
+}
+
 export function findInteractable(w: World, a: Agent): Interactable | null {
+  if (a.aboard >= 0) return findAboard(w, a);
   const edge = findEdge(w, a);
   if (edge && edge.kind === 'climb') return edge;
   const R = CONFIG.interact.range;
@@ -130,6 +170,25 @@ export function findInteractable(w: World, a: Agent): Interactable | null {
     if (score < bestScore) {
       bestScore = score;
       best = { kind, poi: i };
+    }
+  }
+  // Open train doors at the platform.
+  if (Math.abs(a.y) < 0.3) {
+    for (let t = 0; t < w.layout.tracks.length; t++) {
+      if (!doorsOpen(w, t)) continue;
+      const frontX = w.trains.trains[t].frontX;
+      w.carLayouts[t].doors.forEach((d, i) => {
+        const dx = frontX + d.x - a.x, dz = d.z - a.z;
+        const dist = Math.hypot(dx, dz);
+        if (dist > R) return;
+        const cos = dist < 0.4 ? 1 : (dx * fx + dz * fz) / dist;
+        if (cos < CONE_COS) return;
+        const score = dist + (1 - cos) * 2;
+        if (score < bestScore) {
+          bestScore = score;
+          best = { kind: 'board', poi: -1, train: t, door: i };
+        }
+      });
     }
   }
   return best ?? edge;

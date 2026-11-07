@@ -223,6 +223,12 @@ export const CONFIG = {
     doorsOpenAfter: 2.5,
     doorsCloseBefore: 6,
     doorTime: 1.4,
+    /** Doors must be at least this open to board or step off. */
+    boardDoors: 0.8,
+    /** Riding out: the train leaves the map this far past the trainshed end (m). */
+    offMapBeyond: 10,
+    /** A rider is off the map for at most this long (s); the train's away time is capped to fit. */
+    rideMaxOffMap: 40,
   },
 
   render: {

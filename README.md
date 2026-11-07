@@ -29,7 +29,7 @@ Optional URL parameters: `?seed=123` replays a match with the same seed (the see
 | Left mouse | Fire |
 | R | Reload |
 | Q / E / F | Scanner / Disguise / Smoke |
-| G | Interact: sit on a bench or café chair, read the paper, check the departures board, wait at a counter. Press again or move to stop. At a platform edge: drop to the tracks, or climb back up (Space also climbs). |
+| G | Interact: sit on a bench or café chair, read the paper, check the departures board, wait at a counter. Press again or move to stop. At a platform edge: drop to the tracks, or climb back up (Space also climbs). At an open train door: board or step off. |
 | Tab | Scoreboard |
 | Esc | Pause |
 | F3 | Debug overlay (FPS, frame time, draw calls, measured ticks/s and walking speed) |
@@ -62,6 +62,7 @@ Ctrl+W is the browser's close-tab shortcut, so C is the safer crouch key. The ga
   Walking, idling and crouching let it decay at 20/s. Above 60, your hunter sees you outlined in red. Likewise, you see your target outlined when they are exposed.
 - **Blending in (G).** Sitting lets suspicion decay at 30/s, and a standing activity (newspaper, departures board, counter) at 26/s. Hunters also learn half as much from watching you while you do it. The bonus stops after 25 s in the same spot. You can draw and fire while seated, but you can't move; standing up takes 0.4 s. Drawing, firing or moving ends a standing activity. AI spies sit and read too, so sitting is not proof of innocence.
 - **The tracks.** You can walk off a platform edge or press G to drop onto a track bed, and climb back up with Space or G at any point along the platform (a 0.7 s mantle; a plain jump is too low). It is a sunken route: crouch and people standing back on the platforms can't see you. It is also reckless. Being down there adds +20/s suspicion, nearby civilians panic, and an arriving or departing train sounds its horn and then kills anyone on its bed (no points for anyone; normal respawn). A stopped train is solid and safe to walk around. Civilians and AI spies never go down there.
+- **Trains.** While a train stands at the platform with its doors open, press G at a door to board. Inside you can walk around and sit on the benches (seated blending works there too), and press G at a door to step off. Nobody can see or shoot into a car, and you can't shoot out. Stay aboard when the doors close and you ride out: once the train clears the trainshed you are off the map for at most 40 s, then come back aboard the next arrival on the same track. Your hunter loses your trail and your suspicion resets, but the round clock keeps running and you can't score while away.
 - **Gadgets.**
 
   | Gadget | Key | Cooldown | Effect |

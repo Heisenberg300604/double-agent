@@ -153,6 +153,14 @@ export interface Agent {
   mantleToZ: number;
   /** Seconds until the next "someone is on the tracks" civilian panic check. */
   trackPanicTimer: number;
+  /** Track index of the train this agent is aboard, or -1. */
+  aboard: number;
+  /** Train-local x while aboard (world x = train front + localX). */
+  localX: number;
+  /** Seat index inside the train while seated aboard, or -1. */
+  trainSeat: number;
+  /** Riding a train off the map: invisible, untouchable, can't act. */
+  away: boolean;
   /** Walk cycle phase (radians). */
   animPhase: number;
   alive: boolean;
@@ -223,6 +231,7 @@ export type SimEvent =
   /** A moving train sounds its horn at someone on its bed. */
   | { type: 'trainHorn'; track: number; x: number; z: number }
   | { type: 'mantle'; agent: number; up: boolean }
+  | { type: 'ride'; agent: number; phase: 'board' | 'alight' | 'away' | 'return'; track: number; service: number }
   | { type: 'roundEnd' };
 
 export interface Noise {

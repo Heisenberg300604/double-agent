@@ -32,6 +32,8 @@ export interface HudState {
   prompt: string | null;
   /** Seated or busy with an activity and still getting the blending bonus. */
   blending: boolean;
+  /** Riding a train off the map: the card title and seconds until back (-1 unknown). */
+  ride: { title: string; eta: number } | null;
 }
 
 export interface ScoreRow {
@@ -73,6 +75,9 @@ export class Hud {
   private readonly scanFloor = $('#scanner .floor');
   private readonly center = $('#center-msg');
   private readonly revealed = $('#revealed');
+  private readonly ride = $('#ride');
+  private readonly rideTitle = $('#ride .title');
+  private readonly rideEta = $('#ride .eta');
   private readonly prompt = $('#interact');
   private readonly promptText = $('#interact .text');
   private readonly death = $('#death');
@@ -212,6 +217,12 @@ export class Hud {
       if (s.prompt) this.promptText.textContent = s.prompt;
     }
     if (this.changed('blend', s.blending)) this.susp.classList.toggle('blending', s.blending);
+    if (this.changed('ride', !!s.ride)) this.ride.classList.toggle('show', !!s.ride);
+    if (s.ride) {
+      if (this.changed('rideTitle', s.ride.title)) this.rideTitle.textContent = s.ride.title;
+      const eta = s.ride.eta >= 0 ? `Back on the platform in ${Math.ceil(s.ride.eta)} s` : '';
+      if (this.changed('rideEta', eta)) this.rideEta.textContent = eta;
+    }
 
     // Timed elements.
     if (this.hitTimer > 0) {
