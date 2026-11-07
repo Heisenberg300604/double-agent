@@ -123,6 +123,7 @@ export class GameRenderer {
       m.needsUpdate = true;
     }
     this.viewmodel.setEnvironment(this.env);
+    this.effects.setEnvironment(this.env);
     if (old) {
       this.container.replaceChild(this.renderer.domElement, old.domElement);
       old.dispose();

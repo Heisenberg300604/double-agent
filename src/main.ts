@@ -284,6 +284,16 @@ class Game {
     return { dest: dests[(service * 3 + track * 5) % dests.length], from: dests[(service * 7 + track * 2 + 4) % dests.length] };
   }
 
+  /** Spent brass from the player's pistol: out of the ejection port to the right, onto the floor. */
+  private ejectCasing(me: Agent): void {
+    const cy = Math.cos(this.yaw), sy = Math.sin(this.yaw), cp = Math.cos(this.pitch), spch = Math.sin(this.pitch);
+    const fx = -sy * cp, fy = spch, fz = -cy * cp;
+    const rx = cy, rz = -sy;
+    const x = this.cam.x + fx * 0.3 + rx * 0.1, y = this.cam.y + fy * 0.3 - 0.08, z = this.cam.z + fz * 0.3 + rz * 0.1;
+    const side = 1.4 + Math.random() * 0.6, up = 1.2 + Math.random() * 0.6;
+    this.renderer.effects.casing(x, y, z, rx * side + me.vx + fx * 0.3, up, rz * side + me.vz + fz * 0.3, me.y);
+  }
+
   private rideTitle = '';
   private wasDrawn = false;
 
@@ -390,6 +400,7 @@ class Game {
           this.audio.shot(own ? undefined : { x: sh.x, y: sh.y + 1.5, z: sh.z }, own);
           if (own) {
             this.renderer.viewmodel.kick();
+            this.ejectCasing(me);
             this.hud.crosshairKick();
             this.pitch = Math.min(1.45, this.pitch + 0.012);
             if (e.hitAgent >= 0) {

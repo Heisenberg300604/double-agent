@@ -382,3 +382,80 @@ export function smokePuffTexture(): THREE.CanvasTexture {
   g.fillRect(0, 0, 64, 64);
   return tex(c, false, false);
 }
+
+/** Gun finish roughness: mottled parkerising with smoother, worn edges and handling streaks (linear, tiles). */
+export function gunWearTexture(): THREE.CanvasTexture {
+  const [c, g] = canvas(128, 128);
+  g.fillStyle = 'rgb(150,150,150)';
+  g.fillRect(0, 0, 128, 128);
+  noise(g, 128, 128, 70, 4242);
+  // Polished streaks where hands and holster rub the finish.
+  seed = 77;
+  for (let i = 0; i < 26; i++) {
+    g.strokeStyle = `rgba(40,40,40,${0.12 + rnd() * 0.2})`;
+    g.lineWidth = 1 + rnd() * 3;
+    const y = rnd() * 128;
+    g.beginPath();
+    g.moveTo(rnd() * 40, y);
+    g.lineTo(60 + rnd() * 68, y + (rnd() - 0.5) * 6);
+    g.stroke();
+  }
+  // Worn border (UV edges sit on the box edges).
+  const grad = g.createLinearGradient(0, 0, 0, 128);
+  grad.addColorStop(0, 'rgba(30,30,30,0.6)');
+  grad.addColorStop(0.08, 'rgba(30,30,30,0)');
+  grad.addColorStop(0.92, 'rgba(30,30,30,0)');
+  grad.addColorStop(1, 'rgba(30,30,30,0.6)');
+  g.fillStyle = grad;
+  g.fillRect(0, 0, 128, 128);
+  return tex(c, true, false);
+}
+
+/** Grip stippling as a bump map (linear, tiles). */
+export function stippleTexture(): THREE.CanvasTexture {
+  const [c, g] = canvas(64, 64);
+  g.fillStyle = 'rgb(128,128,128)';
+  g.fillRect(0, 0, 64, 64);
+  seed = 99;
+  for (let i = 0; i < 420; i++) {
+    const v = rnd() < 0.5 ? 60 : 200;
+    g.fillStyle = `rgb(${v},${v},${v})`;
+    g.beginPath();
+    g.arc(rnd() * 64, rnd() * 64, 0.8 + rnd() * 1.1, 0, Math.PI * 2);
+    g.fill();
+  }
+  const t = tex(c, true, false);
+  t.repeat.set(3, 3);
+  return t;
+}
+
+/** A few small, ragged muzzle-flash stars (white on transparent), for random variation. */
+export function muzzleFlashTextures(count = 3): THREE.CanvasTexture[] {
+  const out: THREE.CanvasTexture[] = [];
+  seed = 31;
+  for (let k = 0; k < count; k++) {
+    const [c, g] = canvas(64, 64);
+    g.translate(32, 32);
+    const spikes = 4 + Math.floor(rnd() * 4);
+    for (let s = 0; s < spikes; s++) {
+      const a = (s / spikes) * Math.PI * 2 + rnd() * 0.5;
+      const len = 14 + rnd() * 16;
+      const grad = g.createLinearGradient(0, 0, Math.cos(a) * len, Math.sin(a) * len);
+      grad.addColorStop(0, 'rgba(255,255,255,0.95)');
+      grad.addColorStop(1, 'rgba(255,255,255,0)');
+      g.fillStyle = grad;
+      g.beginPath();
+      g.moveTo(Math.cos(a + 1.4) * 3, Math.sin(a + 1.4) * 3);
+      g.lineTo(Math.cos(a) * len, Math.sin(a) * len);
+      g.lineTo(Math.cos(a - 1.4) * 3, Math.sin(a - 1.4) * 3);
+      g.fill();
+    }
+    const core = g.createRadialGradient(0, 0, 0, 0, 0, 12);
+    core.addColorStop(0, 'rgba(255,255,255,1)');
+    core.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = core;
+    g.fillRect(-12, -12, 24, 24);
+    out.push(tex(c, false, false));
+  }
+  return out;
+}

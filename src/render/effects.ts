@@ -9,6 +9,7 @@ import { smokePuffTexture } from './textures';
 interface Tracer { active: boolean; life: number; ax: number; ay: number; az: number; bx: number; by: number; bz: number }
 interface Particle { active: boolean; life: number; maxLife: number; x: number; y: number; z: number; vx: number; vy: number; vz: number }
 interface Ripple { active: boolean; t: number; mesh: THREE.Mesh }
+interface Casing { active: boolean; t: number; x: number; y: number; z: number; vx: number; vy: number; vz: number; floor: number; rx: number; ry: number; spin: number; resting: boolean }
 
 const TRACERS = 24;
 const PARTICLES = 160;
@@ -16,6 +17,9 @@ const PUFFS_PER_SMOKE = 26;
 const MAX_SMOKES = 8;
 const RIPPLES = 6;
 const MARKERS = 10;
+const CASINGS = 12;
+/** Seconds a spent casing lies on the floor before it's recycled. */
+const CASING_LIFE = 6;
 
 export class Effects {
   readonly group = new THREE.Group();
@@ -36,6 +40,12 @@ export class Effects {
   private readonly grenades: THREE.InstancedMesh;
 
   private readonly ripples: Pool<Ripple>;
+  private readonly casings = new Pool<Casing>(CASINGS, () => ({ active: false, t: 0, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, floor: 0, rx: 0, ry: 0, spin: 0, resting: false }));
+  private readonly casingMesh: THREE.InstancedMesh;
+  private readonly q = new THREE.Quaternion();
+  private readonly e = new THREE.Euler();
+  private readonly v3 = new THREE.Vector3();
+  private readonly s3 = new THREE.Vector3(1, 1, 1);
   private readonly markers: THREE.Mesh[] = [];
   private time = 0;
   private readonly m4 = new THREE.Matrix4();
@@ -87,6 +97,17 @@ export class Effects {
     this.grenades.frustumCulled = false;
     this.group.add(this.grenades);
 
+    // Spent brass: one instanced draw call, hidden when there is none. Shiny metal
+    // so the station's environment map gives it a glint.
+    const cg = new THREE.CylinderGeometry(0.0048, 0.0048, 0.019, 8);
+    cg.rotateZ(Math.PI / 2);
+    this.casingMesh = new THREE.InstancedMesh(cg, new THREE.MeshStandardMaterial({ color: 0xd2a650, metalness: 0.95, roughness: 0.22, envMapIntensity: 1.6 }), CASINGS);
+    this.casingMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.casingMesh.frustumCulled = false;
+    this.casingMesh.count = 0;
+    this.casingMesh.visible = false;
+    this.group.add(this.casingMesh);
+
     // Scanner ripples.
     const ringGeo = new THREE.RingGeometry(0.92, 1, 48);
     ringGeo.rotateX(-Math.PI / 2);
@@ -131,6 +152,67 @@ export class Effects {
     }
   }
 
+  /** Eject a spent casing at a world position; it bounces and skitters on the floor at floorY. */
+  casing(x: number, y: number, z: number, vx: number, vy: number, vz: number, floorY: number): void {
+    const c = this.casings.acquire();
+    c.t = 0;
+    c.x = x; c.y = y; c.z = z;
+    c.vx = vx; c.vy = vy; c.vz = vz;
+    c.floor = floorY + 0.005;
+    c.rx = Math.random() * 6.28;
+    c.ry = Math.random() * 6.28;
+    c.spin = 18 + Math.random() * 14;
+    c.resting = false;
+  }
+
+  private updateCasings(dt: number): void {
+    let n = 0;
+    for (const c of this.casings.items) {
+      if (!c.active) continue;
+      c.t += dt;
+      if (c.t > CASING_LIFE) {
+        c.active = false;
+        continue;
+      }
+      if (!c.resting) {
+        c.vy -= 9.8 * dt;
+        c.x += c.vx * dt;
+        c.y += c.vy * dt;
+        c.z += c.vz * dt;
+        c.rx += c.spin * dt;
+        c.ry += c.spin * 0.6 * dt;
+        if (c.y <= c.floor) {
+          // Bounce off the stone, lose energy, skitter sideways.
+          c.y = c.floor;
+          c.vy = -c.vy * 0.38;
+          c.vx = c.vx * 0.55 + (Math.random() - 0.5) * 0.5;
+          c.vz = c.vz * 0.55 + (Math.random() - 0.5) * 0.5;
+          c.spin *= 0.6;
+          if (Math.abs(c.vy) < 0.25) {
+            c.vy = 0;
+            c.spin *= 0.9;
+            const sp = Math.hypot(c.vx, c.vz);
+            if (sp < 0.05) c.resting = true;
+          }
+        }
+        if (c.y <= c.floor + 1e-3 && c.vy === 0) {
+          // Rolling friction.
+          c.vx *= Math.max(0, 1 - 3 * dt);
+          c.vz *= Math.max(0, 1 - 3 * dt);
+          c.rx = Math.PI / 2;
+        }
+      }
+      this.e.set(c.rx, c.ry, 0);
+      this.q.setFromEuler(this.e);
+      this.v3.set(c.x, c.y, c.z);
+      this.m4.compose(this.v3, this.q, this.s3);
+      this.casingMesh.setMatrixAt(n++, this.m4);
+    }
+    this.casingMesh.count = n;
+    this.casingMesh.visible = n > 0;
+    if (n) this.casingMesh.instanceMatrix.needsUpdate = true;
+  }
+
   ripple(x: number, y: number, z: number): void {
     const r = this.ripples.acquire();
     r.t = 0;
@@ -140,6 +222,7 @@ export class Effects {
 
   update(dt: number, smokes: readonly Smoke[], revealed: readonly { x: number; y: number; z: number }[], cam: THREE.Vector3): void {
     this.time += dt;
+    this.updateCasings(dt);
     // Tracers.
     let i = 0;
     for (const t of this.tracers.items) {
@@ -246,9 +329,19 @@ export class Effects {
     }
   }
 
+  /** Reflections for the brass. */
+  setEnvironment(env: THREE.Texture): void {
+    const m = this.casingMesh.material as THREE.MeshStandardMaterial;
+    m.envMap = env;
+    m.needsUpdate = true;
+  }
+
   clear(): void {
     this.tracers.clear();
     this.particles.clear();
+    this.casings.clear();
+    this.casingMesh.count = 0;
+    this.casingMesh.visible = false;
     this.ripples.forEachActive((r) => {
       r.active = false;
       r.mesh.visible = false;
