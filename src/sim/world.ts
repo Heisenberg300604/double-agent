@@ -770,7 +770,7 @@ export class World {
     if (s.firePending && s.drawTimer <= 0 && s.fireCooldown <= 0) {
       s.firePending = false;
       if (s.reloadTimer > 0) {
-        // ignore while reloading
+        this.emit({ type: 'dryFire', spy: a.id });
       } else if (s.ammo <= 0) {
         s.reloadTimer = W.reloadTime;
         this.emit({ type: 'reload', spy: a.id });

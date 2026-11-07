@@ -74,6 +74,8 @@ export const CONFIG = {
     holsterDelayAfterAim: 1.2,
     fovNormal: 75,
     fovAim: 55,
+    /** Reload animation marks, as fractions of reloadTime (the viewmodel and the reload sounds share them). */
+    reloadAnim: { dropStart: 0.1, dropEnd: 0.45, seated: 0.75, slide: 0.87 },
   },
 
   suspicion: {

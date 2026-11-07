@@ -2,7 +2,7 @@
 
 A first-person spy shooter for the browser. Eight assassins in near-identical suits hide in a crowd of civilians inside a grand train station. Each one has a secret target and is hunted by someone they don't know. Acting human keeps you hidden. Acting like a killer gets you found.
 
-Single player: you and 7 AI spies, plus 112 AI civilians, across a 156 m × 54 m station. It has a concourse with a gallery, a west waiting room and restaurant, shop corridors, and three 70 m platforms where trains arrive, dwell and depart. Everything is procedural: no model, texture or audio files.
+Single player: you and 7 AI spies, plus 112 AI civilians, across a 156 m × 54 m station. It has a concourse with a gallery, a west waiting room and restaurant, shop corridors, and three 70 m platforms where trains arrive, dwell and depart. Geometry, textures and most sound are procedural. The only shipped assets are 14 short CC0 gunshot, reload, casing, holster and impact recordings (about 140 KB, loaded after the title screen; see [docs/CREDITS.md](docs/CREDITS.md)). Without them, the game falls back to synthesised sound.
 
 ## Run
 
@@ -86,7 +86,7 @@ src/
   ai/              civilian brain, spy brain, perception, path steering
   render/          renderer + quality, merged map meshes, instanced crowd shader, effects, viewmodel
   ui/              HUD, menus, settings (localStorage)
-  audio/           procedural Web Audio engine
+  audio/           Web Audio engine: procedural synthesis, station reverbs, lazy CC0 sample bank
 ```
 
 - **Simulation is separate from rendering.** The simulation (`sim/`, `ai/`, `world/`) never imports Three.js. It mutates plain data and emits events. The render layer reads that state each frame and interpolates between ticks. A Node server can run `World` unchanged, feeding it `SpyIntent`s from the network instead of the keyboard.

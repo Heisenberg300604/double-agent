@@ -119,6 +119,8 @@ class Game {
     document.getElementById('loading')!.remove();
     console.info(`[double-agent] ready in ${Math.round(performance.now())} ms`);
     this.menus.show('title');
+    // Recorded sounds download only after the title screen is up (procedural until then).
+    window.setTimeout(() => this.audio.preloadSamples(), 300);
     requestAnimationFrame((t) => this.frame(t));
   }
 
@@ -283,6 +285,7 @@ class Game {
   }
 
   private rideTitle = '';
+  private wasDrawn = false;
 
   private onRide(e: Extract<SimEvent, { type: 'ride' }>): void {
     if (e.agent !== this.world.player!.id) return;
@@ -394,11 +397,21 @@ class Game {
               this.audio.hitTick(e.headshot);
             }
           }
-          if (e.hitAgent >= 0) this.renderer.effects.impact(e.toX, e.toY, e.toZ, 0, 0.3, 0, 5);
+          if (e.hitAgent >= 0) {
+            this.renderer.effects.impact(e.toX, e.toY, e.toZ, 0, 0.3, 0, 5);
+            this.audio.impact({ x: e.toX, y: e.toY, z: e.toZ }, 'body');
+          }
           break;
         }
-        case 'impact':
+        case 'impact': {
           this.renderer.effects.impact(e.x, e.y, e.z, e.nx, e.ny, e.nz);
+          // Train cars and their fittings ring like metal; everything else is stone.
+          const metal = e.y > 0.25 && w.trainCarAt(e.x, e.z, 0.1);
+          this.audio.impact({ x: e.x, y: e.y, z: e.z }, metal ? 'metal' : 'stone');
+          break;
+        }
+        case 'dryFire':
+          if (e.spy === me.id) this.audio.dryFire();
           break;
         case 'damage':
           if (e.victim === me.id) {
@@ -566,6 +579,11 @@ class Game {
 
     const sp = me?.spy;
     const playing = this.state !== 'title' && !!me && me.alive;
+    const drawnNow = playing && !!sp?.drawn;
+    if (drawnNow !== this.wasDrawn) {
+      if (this.state === 'playing') this.audio.holster(drawnNow);
+      this.wasDrawn = drawnNow;
+    }
     const r0 = performance.now();
     this.renderer.render(w, this.cam, {
       dt, alpha,

@@ -225,6 +225,8 @@ export type SimEvent =
   | { type: 'smokeThrow'; spy: number }
   | { type: 'smokeDeploy'; x: number; y: number; z: number }
   | { type: 'reload'; spy: number }
+  /** Trigger pulled while the gun can't fire (reloading). */
+  | { type: 'dryFire'; spy: number }
   | { type: 'jump'; agent: number }
   | { type: 'reveal'; spy: number }
   | { type: 'train'; track: number; phase: 'arriving' | 'arrived' | 'closing' | 'departing'; service: number }

@@ -7,6 +7,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { glowTexture } from './textures';
 import type { Activity } from '../sim/types';
+import { CONFIG } from '../config';
 
 function box(w: number, h: number, d: number, x: number, y: number, z: number): THREE.BufferGeometry {
   const g = new THREE.BoxGeometry(w, h, d).toNonIndexed();
@@ -305,9 +306,10 @@ export class Viewmodel {
     this.slide.position.z = Math.sin(Math.min(1, this.slideKick) * Math.PI) * 0.026;
     // Magazine swap: drop out, then a fresh one slides in.
     const rp = this.reload;
+    const RA = CONFIG.weapon.reloadAnim;
     let magDrop = 0;
-    if (rp > 0.1 && rp < 0.45) magDrop = (rp - 0.1) / 0.35;
-    else if (rp >= 0.45 && rp < 0.75) magDrop = 1 - (rp - 0.45) / 0.3;
+    if (rp > RA.dropStart && rp < RA.dropEnd) magDrop = (rp - RA.dropStart) / (RA.dropEnd - RA.dropStart);
+    else if (rp >= RA.dropEnd && rp < RA.seated) magDrop = 1 - (rp - RA.dropEnd) / (RA.seated - RA.dropEnd);
     this.mag.position.set(0, -magDrop * 0.16, magDrop * 0.04);
     this.mag.visible = magDrop < 0.95;
     // Left hand comes up to support the grip when aiming (or to swap the mag).
