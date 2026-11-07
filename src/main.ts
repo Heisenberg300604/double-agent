@@ -14,6 +14,7 @@ import { eyeHeight } from './sim/movement';
 import { ordinal, rankOf } from './sim/scoring';
 import { emptyIntent, type Agent, type SimEvent } from './sim/types';
 import { World } from './sim/world';
+import { setupPractice } from './sim/practice';
 import { Hud, type HudState, type ScoreRow } from './ui/hud';
 import { Menus } from './ui/menus';
 import { loadSettings, saveSettings, type Settings } from './ui/settings';
@@ -84,6 +85,10 @@ class Game {
         // First run: the illustrated briefing, then a match with contextual tips.
         if (!this.settings.tutorialDone) this.menus.briefing();
         else this.startMatch(false);
+      },
+      practice: () => {
+        this.audio.start();
+        this.startMatch(true, true);
       },
       briefingDone: () => {
         this.settings.tutorialDone = true;
@@ -157,10 +162,12 @@ class Game {
   }
 
   // ---------------------------------------------------------------- state changes
-  private startMatch(tips: boolean): void {
+  private startMatch(tips: boolean, practice = false): void {
     this.tipsOn = tips;
+    this.practice = practice;
     this.hints.clear();
     this.world = this.makeWorld(true);
+    if (practice) setupPractice(this.world);
     const p = this.world.player!;
     this.yaw = p.yaw;
     this.pitch = 0;
@@ -173,7 +180,7 @@ class Game {
     this.state = 'playing';
     this.input.clearPresses();
     this.input.requestLock();
-    this.hud.centerMessage('Find your target. Blend in.', false, 3);
+    this.hud.centerMessage(practice ? 'Practice: nobody is hunting you. Find your target.' : 'Find your target. Blend in.', false, 3);
     this.matchTime = 0;
     this.lastTime = performance.now();
   }
@@ -319,6 +326,8 @@ class Game {
   }
 
   private rideTitle = '';
+  /** Practice session: no hunters; it ends after the first target kill. */
+  private practice = false;
   private wasDrawn = false;
 
   private onRide(e: Extract<SimEvent, { type: 'ride' }>): void {
@@ -528,6 +537,12 @@ class Game {
     }
     const pts = (n: number): string => (n >= 0 ? `+${n}` : `−${-n}`);
     if (e.killer === me.id) {
+      if (this.practice && e.relation === 'target') {
+        this.hud.centerMessage('Practice complete — target eliminated', false, 3.5);
+        this.audio.killSting(true);
+        this.later(3.5, () => { if (this.practice && this.state === 'playing') this.toTitle(); });
+        return;
+      }
       switch (e.relation) {
         case 'target': {
           const extra = [e.headshot ? 'headshot' : '', e.unseen ? 'unseen' : ''].filter(Boolean).join(', ');

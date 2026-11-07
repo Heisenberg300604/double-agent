@@ -239,6 +239,15 @@ export const CONFIG = {
     rideArriveShow: 3,
     /** Doorways are open for walking and for sight/shots once the doors are this open. */
     walkDoors: 0.5,
+    /** Civilian passengers: riding (hidden) at the start, per track. */
+    startPassengers: 5,
+    /** Passengers stepping off per arrival, and civilians boarding per departure. */
+    alightMin: 3,
+    alightMax: 6,
+    boardMin: 2,
+    boardMax: 4,
+    /** Civilians this close to a door may decide to catch the train. */
+    boardRadius: 14,
   },
 
   render: {

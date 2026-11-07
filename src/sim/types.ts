@@ -104,9 +104,12 @@ export interface SpyState {
 }
 
 export interface CivState {
-  state: 'wander' | 'idle' | 'panic';
+  /** 'board': walking to a train door to catch it. */
+  state: 'wander' | 'idle' | 'panic' | 'board';
   timer: number;
   poi: number;
+  /** Track of the train being boarded ('board' state), else -1. */
+  boardTrack?: number;
 }
 
 export interface Agent {

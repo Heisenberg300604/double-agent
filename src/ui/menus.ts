@@ -7,6 +7,8 @@ export type MenuId = 'title' | 'howto' | 'briefing' | 'settings' | 'pause' | 'en
 
 export interface MenuHandlers {
   play(): void;
+  /** Practice: no hunters, a target that stands still, ends at the first kill. */
+  practice(): void;
   resume(): void;
   quit(): void;
   again(): void;
@@ -73,6 +75,7 @@ export class Menus {
   private action(a: string): void {
     switch (a) {
       case 'play': return this.h.play();
+      case 'practice': return this.h.practice();
       case 'resume': return this.h.resume();
       case 'quit': return this.h.quit();
       case 'again': return this.h.again();

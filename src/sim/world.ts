@@ -19,7 +19,7 @@ import { emptyIntent, type Agent, type Appearance, type Noise, type SimEvent, ty
 import { canSee } from '../ai/perception';
 import { civilianThink, panic, standUp } from '../ai/civilianBrain';
 import { activityFor, findInteractable, onTrackBed, type Interactable } from './interact';
-import { followPath, clearGoal } from '../ai/steering';
+import { followPath, clearGoal, setGoal } from '../ai/steering';
 import { SpyBrain } from '../ai/spyBrain';
 import { TrainSystem, TRAIN_LENGTH, carOffset, trainSpeed } from './trains';
 import { CAR_DOOR_HALF, CAR_FLOOR_Y, buildTrainLayout, type CarLayout } from '../world/trainCars';
@@ -66,6 +66,11 @@ export class World {
   private readonly trainRayShapes: TrainRayShape[];
   private readonly interiorBounds: { minX: number; maxX: number; minZ: number; maxZ: number }[];
   readonly trainSeatOccupant: Int32Array[];
+  /** Civilians riding each train (hidden, inactive): they step off at its next arrival. */
+  readonly passengers: number[][];
+  /** Per track: this dwell's passengers have stepped off / boarders have been called. */
+  private readonly alighted: boolean[];
+  private readonly boardCalled: boolean[];
   /** Agent id → index into Agent.sus (spy order), or -1 for civilians. */
   readonly spyIndex: Int32Array;
   /** Per agent: could it see the player at its last look? (for the HUD's "watched" count) */
@@ -151,6 +156,18 @@ export class World {
     }
     this.contracts.init(this.spies.map((s) => s.id));
     this.syncContracts();
+
+    // Some civilians start out riding the trains, so the first arrivals have passengers.
+    this.passengers = this.layout.tracks.map(() => []);
+    this.alighted = this.layout.tracks.map(() => true);
+    this.boardCalled = this.layout.tracks.map(() => false);
+    const civs = this.agents.filter((a) => a.civ);
+    for (let t = 0; t < this.passengers.length; t++) {
+      for (let k = 0; k < CONFIG.trains.startPassengers && civs.length > 8; k++) {
+        const c = civs.splice(this.rng.int(civs.length), 1)[0];
+        this.stowPassenger(c, t);
+      }
+    }
   }
 
   private makeAgent(kind: Agent['kind'], look: Appearance, x: number, y: number, z: number, isPlayer: boolean): Agent {
@@ -512,6 +529,89 @@ export class World {
     a.away = false;
   }
 
+  // ------------------------------------------------------------------ civilian passengers
+  /** Hide a civilian inside a train (inactive until its next arrival). */
+  private stowPassenger(c: Agent, track: number): void {
+    standUp(this, c);
+    this.releasePoi(c);
+    clearGoal(c);
+    c.away = true;
+    c.vx = c.vz = c.speed = 0;
+    c.sus.fill(0);
+    c.civ!.state = 'wander';
+    c.civ!.boardTrack = -1;
+    this.passengers[track].push(c.id);
+  }
+
+  /**
+   * Arrivals: once the doors are open, 3–6 passengers step out of random doors
+   * onto the platform. Departures: when the closing call goes out, a few nearby
+   * wandering civilians head for the doors and board if they make it in time.
+   */
+  private updatePassengers(): void {
+    const T = CONFIG.trains;
+    for (let t = 0; t < this.passengers.length; t++) {
+      const s = this.trains.trains[t];
+      if (s.phase !== 'dwell') {
+        this.alighted[t] = false;
+        this.boardCalled[t] = false;
+        continue;
+      }
+      const doors = this.carLayouts[t].doors;
+      if (!this.alighted[t] && this.doorwaysOpen(t)) {
+        this.alighted[t] = true;
+        const n = Math.min(this.passengers[t].length, T.alightMin + this.rng.int(T.alightMax - T.alightMin + 1));
+        for (let k = 0; k < n; k++) {
+          const id = this.passengers[t].shift()!;
+          const c = this.agents[id];
+          const d = doors[this.rng.int(doors.length)];
+          c.x = c.px = s.frontX + d.x + this.rng.range(-0.3, 0.3);
+          c.z = c.pz = d.z + d.side * this.rng.range(0.7, 1.3);
+          c.y = c.py = 0;
+          c.yaw = d.side > 0 ? Math.PI : 0;
+          c.away = false;
+          c.alive = true;
+          c.pose = 'stand';
+          c.faceYaw = NaN;
+          c.civ!.state = 'wander';
+          c.civ!.timer = 0;
+        }
+      }
+      // Board: called a little before the doors close.
+      if (!this.boardCalled[t] && s.closingAnnounced) {
+        this.boardCalled[t] = true;
+        const want = T.boardMin + this.rng.int(T.boardMax - T.boardMin + 1);
+        let n = 0;
+        for (const c of this.agents) {
+          if (n >= want) break;
+          if (!c.civ || !c.alive || c.away || c.civ.state !== 'wander' || c.pose === 'sit') continue;
+          const d = doors[this.rng.int(doors.length)];
+          const dx = s.frontX + d.x, dz = d.z + d.side * 0.6;
+          if (Math.hypot(c.x - dx, c.z - dz) > T.boardRadius || Math.abs(c.y) > 0.3) continue;
+          if (!setGoal(this, c, dx, 0, dz)) continue;
+          this.releasePoi(c);
+          c.civ.state = 'board';
+          c.civ.boardTrack = t;
+          c.civ.timer = T.doorsCloseBefore + 4;
+          c.maxSpeed = CONFIG.civilian.maxSpeed;
+          n++;
+        }
+      }
+      // Anyone who reached a door while it's open gets on.
+      if (this.doorwaysOpen(t)) {
+        for (const c of this.agents) {
+          if (!c.civ || c.away || c.civ.state !== 'board' || c.civ.boardTrack !== t || !c.alive) continue;
+          for (const d of doors) {
+            if (Math.hypot(c.x - (s.frontX + d.x), c.z - (d.z + d.side * 0.6)) < 0.9) {
+              this.stowPassenger(c, t);
+              break;
+            }
+          }
+        }
+      }
+    }
+  }
+
   /** Doorways open for walking and for sight and shots. */
   doorwaysOpen(track: number): boolean {
     return this.trains.trains[track].doors >= CONFIG.trains.walkDoors;
@@ -861,6 +961,7 @@ export class World {
     // Trains move first so sight lines and shots see the current cars.
     this.trains.step(dt, (e) => this.emit(e));
     this.updateRiders();
+    this.updatePassengers();
     this.syncTrainRays();
 
     // Spatial hash.
@@ -872,8 +973,9 @@ export class World {
     for (let i = 0; i < this.agents.length; i++) {
       if ((i + this.tick) % AI_DIVISOR !== 0) continue;
       const a = this.agents[i];
-      if (a.civ) civilianThink(this, a, thinkDt);
-      else if (!a.isPlayer) this.brains.get(a.id)?.think(thinkDt);
+      if (a.civ) {
+        if (!a.away) civilianThink(this, a, thinkDt);
+      } else if (!a.isPlayer) this.brains.get(a.id)?.think(thinkDt);
     }
     for (const brain of this.brains.values()) brain.act(dt);
 
@@ -900,6 +1002,7 @@ export class World {
 
     // Movement.
     for (const a of this.agents) {
+      if (a.away && !a.isPlayer) continue; // passengers riding a train
       let jumped: boolean;
       if (a.aboard >= 0) {
         // Inside a train: move in train-local space against the car interior.
