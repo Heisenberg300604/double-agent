@@ -74,6 +74,8 @@ export const CONFIG = {
     holsterDelayAfterAim: 1.2,
     fovNormal: 75,
     fovAim: 55,
+    /** Reload animation marks, as fractions of reloadTime (the viewmodel and the reload sounds share them). */
+    reloadAnim: { dropStart: 0.1, dropEnd: 0.45, seated: 0.75, slide: 0.87 },
   },
 
   suspicion: {
@@ -89,7 +91,41 @@ export const CONFIG = {
     proximityDelay: 3,
     proximity: 10,
     decay: 20,
+    /** Decay per second while seated on a bench or café chair (blending in). */
+    seatedDecay: 30,
+    /** Decay per second during a standing activity (reading, phone, board). */
+    activityDecay: 26,
+    /** Gain per second while down on the track bed. */
+    onTracks: 20,
     exposed: 60,
+  },
+
+  interact: {
+    /** Max distance from the seat or activity spot (m). */
+    range: 1.6,
+    /** Half-angle of the look cone that an interactable must fall in. */
+    coneDeg: 35,
+    /** Movement lock after standing up from a seat (s). */
+    standUpTime: 0.4,
+    /** The blending bonus (faster decay, weaker observation) stops after this long in one spot. */
+    blendBonusSeconds: 25,
+  },
+
+  tracks: {
+    /** Max gap between the body and the platform edge to climb up or drop down (m). */
+    edgeReach: 0.8,
+    /** Facing within this angle of the edge normal to climb or drop. */
+    edgeConeDeg: 60,
+    mantleTime: 0.7,
+    dropTime: 0.45,
+    /** A car moving faster than this kills anyone on its bed (m/s). */
+    killSpeed: 0.5,
+    /** Civilians within this radius panic when someone is down on the tracks. */
+    panicRadius: 6,
+    panicInterval: 2,
+    /** Arriving/departing trains sound the horn at someone on their bed within this distance ahead. */
+    hornRange: 70,
+    hornCooldown: 6,
   },
 
   gadgets: {
@@ -130,6 +166,8 @@ export const CONFIG = {
     observeMin: 0.5,
     observeMax: 0.9,
     observeRange: 28,
+    /** Observation gain multiplier while the target is seated or busy with an activity. */
+    blendObserveFactor: 0.5,
     /** Belief gain per second from a visible agent with high suspicion. */
     suspiciousGain: 0.5,
     /** Belief gain per second when the target's red outline is visible to its hunter. */
@@ -160,6 +198,11 @@ export const CONFIG = {
     scanMemory: 30,
     /** Blending bots pick points of interest within this radius (large maps). */
     blendRadius: 28,
+    /** While searching near a scanner estimate: chance per stop to linger at a bench/stand instead of wandering on. */
+    searchBlendChance: 0.3,
+    /** How long a searching bot lingers there (s). Short, so the search keeps moving. */
+    searchBlendMin: 2,
+    searchBlendMax: 5,
     scanConeDeg: 32,
     retaliateTime: 4,
     /** Nobody strikes during the opening seconds of a round (time to read the dossier). */
@@ -182,6 +225,12 @@ export const CONFIG = {
     doorsOpenAfter: 2.5,
     doorsCloseBefore: 6,
     doorTime: 1.4,
+    /** Doors must be at least this open to board or step off. */
+    boardDoors: 0.8,
+    /** Riding out: the train leaves the map this far past the trainshed end (m). */
+    offMapBeyond: 10,
+    /** A rider is off the map for at most this long (s); the train's away time is capped to fit. */
+    rideMaxOffMap: 40,
   },
 
   render: {

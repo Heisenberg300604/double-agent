@@ -21,12 +21,13 @@ export function inViewCone(obs: Agent, target: Agent, range: number = RANGE): bo
 
 export function lineOfSight(w: World, obs: Agent, target: Agent): boolean {
   const ex = obs.x, ey = obs.y + eyeHeight(obs), ez = obs.z;
-  const tx = target.x, ty = target.y + (target.pose === 'dead' ? 0.2 : 1.2), tz = target.z;
+  // Aim at the upper body; a crouched body is lower (a crouch on the track bed hides below the platform).
+  const tx = target.x, ty = target.y + (target.pose === 'dead' ? 0.2 : target.crouch ? 0.8 : 1.2), tz = target.z;
   if (!w.col.clearLine(ex, ey, ez, tx, ty, tz)) return false;
   return !w.smokeBlocks(ex, ey, ez, tx, ty, tz);
 }
 
 export function canSee(w: World, obs: Agent, target: Agent, range: number = RANGE): boolean {
-  if (!target.alive && target.pose !== 'dead') return false;
+  if ((!target.alive && target.pose !== 'dead') || target.away || obs.away) return false;
   return inViewCone(obs, target, range) && lineOfSight(w, obs, target);
 }

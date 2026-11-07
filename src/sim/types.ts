@@ -3,6 +3,8 @@
 export type AgentKind = 'civilian' | 'spy';
 export type Pose = 'stand' | 'sit' | 'dead';
 export type MoveMode = 'walk' | 'run' | 'crouch';
+/** Standing idle activity at a point of interest (reading, phone/coffee, looking up at the board). */
+export type Activity = 'none' | 'read' | 'phone' | 'look';
 
 export type BagKind = 'none' | 'briefcase' | 'shoulder' | 'backpack';
 /** 0 short, 1 long, 2 tied back, 3 shaved. */
@@ -50,12 +52,14 @@ export interface SpyIntent {
   scanner: boolean;
   disguise: boolean;
   smoke: boolean;
+  /** Use the interactable in front of you (sit, stand up, start or stop an activity). */
+  interact: boolean;
 }
 
 export function emptyIntent(): SpyIntent {
   return {
     moveX: 0, moveZ: 0, mode: 'walk', jump: false, yaw: 0, pitch: 0,
-    aim: false, fire: false, reload: false, scanner: false, disguise: false, smoke: false,
+    aim: false, fire: false, reload: false, scanner: false, disguise: false, smoke: false, interact: false,
   };
 }
 
@@ -132,6 +136,31 @@ export interface Agent {
   seatX: number;
   seatY: number;
   seatZ: number;
+  /** Standing idle activity at the occupied POI. */
+  activity: Activity;
+  /** Seconds spent seated or in the current activity (the blending bonus caps on this). */
+  blendTimer: number;
+  /** Movement lock while standing up from a seat (s). */
+  standLock: number;
+  /** Climbing up from (or dropping down to) a track bed: seconds left, 0 when not. */
+  mantleT: number;
+  mantleDur: number;
+  mantleFromX: number;
+  mantleFromY: number;
+  mantleFromZ: number;
+  mantleToX: number;
+  mantleToY: number;
+  mantleToZ: number;
+  /** Seconds until the next "someone is on the tracks" civilian panic check. */
+  trackPanicTimer: number;
+  /** Track index of the train this agent is aboard, or -1. */
+  aboard: number;
+  /** Train-local x while aboard (world x = train front + localX). */
+  localX: number;
+  /** Seat index inside the train while seated aboard, or -1. */
+  trainSeat: number;
+  /** Riding a train off the map: invisible, untouchable, can't act. */
+  away: boolean;
   /** Walk cycle phase (radians). */
   animPhase: number;
   alive: boolean;
@@ -179,6 +208,8 @@ export type SimEvent =
   | { type: 'damage'; victim: number; attacker: number; amount: number; headshot: boolean }
   | {
       type: 'kill';
+      /** How they died: shot, or hit by a moving train. */
+      cause: 'shot' | 'train';
       killer: number;
       victim: number;
       victimKind: AgentKind;
@@ -194,9 +225,15 @@ export type SimEvent =
   | { type: 'smokeThrow'; spy: number }
   | { type: 'smokeDeploy'; x: number; y: number; z: number }
   | { type: 'reload'; spy: number }
+  /** Trigger pulled while the gun can't fire (reloading). */
+  | { type: 'dryFire'; spy: number }
   | { type: 'jump'; agent: number }
   | { type: 'reveal'; spy: number }
   | { type: 'train'; track: number; phase: 'arriving' | 'arrived' | 'closing' | 'departing'; service: number }
+  /** A moving train sounds its horn at someone on its bed. */
+  | { type: 'trainHorn'; track: number; x: number; z: number }
+  | { type: 'mantle'; agent: number; up: boolean }
+  | { type: 'ride'; agent: number; phase: 'board' | 'alight' | 'away' | 'return'; track: number; service: number }
   | { type: 'roundEnd' };
 
 export interface Noise {

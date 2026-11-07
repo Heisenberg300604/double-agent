@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { CONFIG } from '../src/config';
-import { bodyHeight } from '../src/sim/movement';
+import { bodyHeight, stepMovement } from '../src/sim/movement';
 import { emptyIntent } from '../src/sim/types';
 import { World } from '../src/sim/world';
 
@@ -36,7 +36,8 @@ function runMatch(seed: number, withPlayer: boolean): { w: World; stats: MatchSt
     for (const a of w.agents) {
       if (!Number.isFinite(a.x) || !Number.isFinite(a.y) || !Number.isFinite(a.z)) stats.violations.push(`NaN agent ${a.id}`);
       if (a.x < b.minX || a.x > b.maxX || a.z < b.minZ || a.z > b.maxZ || a.y < -0.01 || a.y > 6) stats.violations.push(`out of bounds ${a.id} ${a.x},${a.y},${a.z}`);
-      for (const tr of w.layout.tracks) {
+      // Only the player may go down onto the tracks.
+      if (!a.isPlayer) for (const tr of w.layout.tracks) {
         if (a.alive && a.z > tr.z0 + 0.05 && a.z < tr.z1 - 0.05 && a.x > w.layout.tracks[0].stopX - 2) stats.violations.push(`on the tracks ${a.id} ${a.x.toFixed(1)},${a.z.toFixed(1)}`);
       }
       if (a.alive && a.pose === 'stand' && !w.col.circleFree(a.x, a.z, a.y, 0.12, bodyHeight(a))) {
@@ -110,6 +111,7 @@ describe('player movement', () => {
     const w = new World({ seed: 5, withPlayer: true, civilians: 0, spies: 8 });
     const L = w.layout.landmarks;
     for (const s of w.spies) if (!s.isPlayer) { s.x = 90; s.z = 24; } // keep bots out of the way
+    w.brains.clear(); // and idle: this test is about movement, not about surviving a hunt
     const p = w.player!;
     p.x = p.px = L.cafe.x; p.z = p.pz = L.cafe.z; p.y = 0;
     expect(walkTo(w, L.balcony.x, L.balcony.y, L.balcony.z, 60)).toBe(true);
@@ -135,15 +137,33 @@ describe('player movement', () => {
     }
   });
 
-  it('cannot step onto the track beds', () => {
+  it('the player can walk off the platform edge onto the track bed', () => {
     const w = new World({ seed: 7, withPlayer: true, civilians: 0 });
+    w.brains.clear();
     const p = w.player!;
     const tr = w.layout.tracks[1];
     p.x = p.px = 60; p.z = p.pz = tr.z1 + 1.5; p.y = 0;
     const intent = emptyIntent();
     intent.moveZ = -1;
-    for (let t = 0; t < 240; t++) { w.setPlayerIntent(intent); w.step(DT); }
-    expect(p.z).toBeGreaterThan(tr.z1);
+    for (let t = 0; t < 120; t++) { w.setPlayerIntent(intent); w.step(DT); }
+    expect(p.z).toBeLessThan(tr.z1);
+    expect(p.z).toBeGreaterThan(tr.z0);
+    expect(p.y).toBeCloseTo(tr.bedY, 2);
+  });
+
+  it('AI agents cannot step onto the track beds', () => {
+    const w = new World({ seed: 7, withPlayer: false, civilians: 1 });
+    const c = w.agents.find((a) => a.civ)!;
+    const tr = w.layout.tracks[1];
+    c.x = c.px = 60; c.z = c.pz = tr.z1 + 1.5; c.y = 0;
+    c.hasGoal = false;
+    for (let t = 0; t < 120; t++) {
+      c.wantX = 0; c.wantZ = -2;
+      // stepMovement directly: the brain would never walk here.
+      stepMovement(c, w.col, DT, w.layout.bounds);
+    }
+    expect(c.z).toBeGreaterThan(tr.z1);
+    expect(c.y).toBe(0);
   });
 
   it('cannot walk through a wall', () => {

@@ -159,6 +159,15 @@
       #loading { position: absolute; inset: 0; display: grid; place-items: center; font: 14px var(--sans); letter-spacing: 4px; color: var(--muted); background: var(--bg); }
       #toast { position: absolute; bottom: 96px; left: 50%; transform: translateX(-50%); max-width: min(560px, 90vw); text-align: center; font-size: 14px; color: var(--text); letter-spacing: 0.5px; padding: 8px 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 4px; }
       #toast b { color: var(--brass); }
+      #interact { position: absolute; bottom: 150px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 8px; padding: 6px 12px 6px 8px; font-size: 14px; letter-spacing: 0.5px; color: var(--text); }
+      #interact kbd { font: 600 12px var(--mono); color: var(--bg); background: var(--brass); border-radius: 3px; padding: 2px 6px; }
+      #susp.blending:not(.exposed) .fill { background: var(--ok); }
+      #ride { position: absolute; inset: 0; display: grid; place-items: center; background: #050406; opacity: 0; visibility: hidden; transition: opacity 0.9s, visibility 0s 0.9s; }
+      #ride.show { opacity: 1; visibility: visible; transition: opacity 0.9s; }
+      #ride .card { text-align: center; padding: 22px 30px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+      #ride .kicker { font: 600 11px var(--sans); letter-spacing: 3px; color: var(--brass); text-transform: uppercase; }
+      #ride .title { font: 600 26px var(--serif); letter-spacing: 1px; margin: 10px 0 6px; }
+      #ride .eta { font: 15px var(--mono); color: var(--muted); }
       @media (max-width: 720px) {
         #killfeed { width: 60vw; }
         #dossier { top: 86px; width: 180px; }
@@ -190,6 +199,7 @@
         <div id="scanner" class="hidden"><div class="ring"><div class="arrow"></div></div><div class="band">Near</div><div class="floor"></div></div>
         <div id="center-msg"></div>
         <div id="revealed" class="hidden">YOU ARE REVEALED TO ALL SPIES</div>
+        <div id="interact" class="chip hidden"><kbd>G</kbd><span class="text">Sit</span></div>
         <div id="bottom">
           <div id="health" class="chip"><div class="row"><span>HEALTH</span><span id="hp-num">100</span></div><div class="track"><div class="fill"></div></div></div>
           <div id="ammo" class="chip">8<small>/ 8</small></div>
@@ -203,6 +213,7 @@
         <div id="scoreboard" class="chip hidden"><table><thead><tr><th>Agent</th><th class="num">Kills</th><th class="num">Deaths</th><th class="num">Civilians</th><th class="num">Score</th></tr></thead><tbody></tbody></table></div>
         <div id="debug" class="chip hidden"></div>
         <div id="toast" class="hidden"></div>
+        <div id="ride"><div class="card"><div class="kicker">Off the map</div><div class="title"></div><div class="eta"></div></div></div>
       </div>
 
       <div id="menu-title" class="screen hidden">
@@ -222,7 +233,7 @@
           <h2 class="h">YOUR BRIEFING</h2>
           <ol>
             <li><b>Find your target.</b> Your dossier (top right) describes them. Press <b>Q</b> to scan: an arrow shows their direction and distance.</li>
-            <li><b>Blend in.</b> Walk, idle, sit. The crowd is your cover. Someone is hunting <i>you</i> too.</li>
+            <li><b>Blend in.</b> Walk, idle, sit on a bench or read the paper (<b>G</b>). Acting like a commuter cools your suspicion faster, and hunters learn less from watching you. The crowd is your cover. Someone is hunting <i>you</i> too.</li>
             <li><b>Watch your suspicion.</b> Running, drawing or aiming your pistol raises it. Above 60 you glow <span class="red">red</span> to your hunter.</li>
             <li><b>Don't kill civilians.</b> −50 points, and every spy sees where you are.</li>
           </ol>
@@ -230,6 +241,7 @@
             <kbd>WASD</kbd><span>Walk · <kbd>Shift</kbd> run · <kbd>C</kbd>/<kbd>Ctrl</kbd> crouch · <kbd>Space</kbd> jump</span>
             <kbd>RMB</kbd><span>Draw &amp; aim · <kbd>LMB</kbd> fire · <kbd>R</kbd> reload</span>
             <kbd>Q E F</kbd><span>Scanner · Disguise · Smoke</span>
+            <kbd>G</kbd><span>Interact: sit, read the paper, drop to the tracks, climb up, board a train</span>
             <kbd>Tab</kbd><span>Scoreboard · <kbd>Esc</kbd> pause · <kbd>F3</kbd> debug</span>
           </div>
           <div class="btns"><button class="primary" data-action="howto-done">Got it</button></div>

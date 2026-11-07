@@ -9,6 +9,7 @@ import { AudioEngine } from './audio/audio';
 import { GameRenderer, type CameraPose } from './render/renderer';
 import { describeAppearance } from './sim/appearance';
 import { bandOf } from './sim/gadgets';
+import { interactLabel } from './sim/interact';
 import { eyeHeight } from './sim/movement';
 import { ordinal, rankOf } from './sim/scoring';
 import { emptyIntent, type Agent, type SimEvent } from './sim/types';
@@ -71,6 +72,9 @@ class Game {
     this.input.onLockChange = (locked) => {
       if (!locked && this.state === 'playing') this.pause();
     };
+    this.input.onRelease = () => {
+      if (this.state === 'playing') this.pause();
+    };
     this.audio.setVolume(this.settings.volume);
 
     this.menus = new Menus(this.settings, {
@@ -115,6 +119,8 @@ class Game {
     document.getElementById('loading')!.remove();
     console.info(`[double-agent] ready in ${Math.round(performance.now())} ms`);
     this.menus.show('title');
+    // Recorded sounds download only after the title screen is up (procedural until then).
+    window.setTimeout(() => this.audio.preloadSamples(), 300);
     requestAnimationFrame((t) => this.frame(t));
   }
 
@@ -272,13 +278,42 @@ class Game {
     this.audio.announce(general[this.announceIdx++ % general.length]);
   }
 
+  /** Destination and origin names for a service (shared by the PA and the ride card). */
+  private serviceNames(track: number, service: number): { dest: string; from: string } {
+    const dests = ['Northgate', 'Halvern Bay', 'Castlemere', 'Orrin Fields', 'Saltworth', 'Kings Vale', 'Ashcombe', 'Mirelow', 'Brandish Cross', 'Westerly'];
+    return { dest: dests[(service * 3 + track * 5) % dests.length], from: dests[(service * 7 + track * 2 + 4) % dests.length] };
+  }
+
+  private rideTitle = '';
+  private wasDrawn = false;
+
+  private onRide(e: Extract<SimEvent, { type: 'ride' }>): void {
+    if (e.agent !== this.world.player!.id) return;
+    const plat = this.world.layout.tracks[e.track].platforms.join(' / ');
+    switch (e.phase) {
+      case 'board':
+        this.hud.centerMessage('Aboard', false, 1.5);
+        this.hint('ride', 'Stay aboard when the doors close to ride out: your hunter loses your trail, but the clock keeps running.');
+        break;
+      case 'away': {
+        const m = Math.floor(this.renderer.stationMinutes) % (24 * 60);
+        const hhmm = `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+        this.rideTitle = `Riding the ${hhmm} to ${this.serviceNames(e.track, e.service).dest}`;
+        break;
+      }
+      case 'return':
+        this.hud.centerMessage(`Back at platform ${plat} — your hunter lost your trail`, false, 3.5);
+        break;
+      case 'alight':
+        break;
+    }
+  }
+
   /** Station announcements and sounds driven by the simulation's train events. */
   private onTrain(e: Extract<SimEvent, { type: 'train' }>): void {
-    const dests = ['Northgate', 'Halvern Bay', 'Castlemere', 'Orrin Fields', 'Saltworth', 'Kings Vale', 'Ashcombe', 'Mirelow', 'Brandish Cross', 'Westerly'];
     const tr = this.world.layout.tracks[e.track];
     const plat = tr.platforms.join(' and ');
-    const dest = dests[(e.service * 3 + e.track * 5) % dests.length];
-    const from = dests[(e.service * 7 + e.track * 2 + 4) % dests.length];
+    const { dest, from } = this.serviceNames(e.track, e.service);
     const zc = (tr.z0 + tr.z1) / 2;
     const mid = { x: tr.stopX + 30, y: 2, z: zc };
     const T = CONFIG.trains;
@@ -334,6 +369,7 @@ class Game {
     it.scanner = inp.consume('KeyQ');
     it.disguise = inp.consume('KeyE');
     it.smoke = inp.consume('KeyF');
+    it.interact = inp.consume('KeyG');
   }
 
   // ---------------------------------------------------------------- events → HUD / FX / audio
@@ -361,11 +397,21 @@ class Game {
               this.audio.hitTick(e.headshot);
             }
           }
-          if (e.hitAgent >= 0) this.renderer.effects.impact(e.toX, e.toY, e.toZ, 0, 0.3, 0, 5);
+          if (e.hitAgent >= 0) {
+            this.renderer.effects.impact(e.toX, e.toY, e.toZ, 0, 0.3, 0, 5);
+            this.audio.impact({ x: e.toX, y: e.toY, z: e.toZ }, 'body');
+          }
           break;
         }
-        case 'impact':
+        case 'impact': {
           this.renderer.effects.impact(e.x, e.y, e.z, e.nx, e.ny, e.nz);
+          // Train cars and their fittings ring like metal; everything else is stone.
+          const metal = e.y > 0.25 && w.trainCarAt(e.x, e.z, 0.1);
+          this.audio.impact({ x: e.x, y: e.y, z: e.z }, metal ? 'metal' : 'stone');
+          break;
+        }
+        case 'dryFire':
+          if (e.spy === me.id) this.audio.dryFire();
           break;
         case 'damage':
           if (e.victim === me.id) {
@@ -412,6 +458,16 @@ class Game {
         case 'train':
           this.onTrain(e);
           break;
+        case 'trainHorn':
+          this.audio.trainHorn({ x: e.x, y: 1.5, z: e.z });
+          if (me.alive && Math.abs(me.z - e.z) < 2.5 && me.y < -0.5) this.hud.centerMessage('Train coming — get off the tracks!', true, 2.5);
+          break;
+        case 'mantle':
+          if (e.agent === me.id) this.audio.footstep(undefined, true);
+          break;
+        case 'ride':
+          this.onRide(e);
+          break;
         case 'jump':
         case 'smokeThrow':
         case 'roundEnd':
@@ -422,6 +478,19 @@ class Game {
 
   private onKill(e: Extract<SimEvent, { type: 'kill' }>): void {
     const me = this.world.player!;
+    if (e.cause === 'train') {
+      const v = this.world.agents[e.victim];
+      this.audio.screech({ x: v.x, y: 0.5, z: v.z });
+      if (e.victim === me.id) {
+        this.deathBy = 'Hit by a train';
+        this.hud.killfeed('You were hit by a train', 'bad');
+        this.deathCam = 0;
+        this.audio.killSting(false);
+      } else {
+        this.hud.killfeed(`${this.name(e.victim)} was hit by a train`, 'neutral');
+      }
+      return;
+    }
     const pts = (n: number): string => (n >= 0 ? `+${n}` : `−${-n}`);
     if (e.killer === me.id) {
       switch (e.relation) {
@@ -510,6 +579,11 @@ class Game {
 
     const sp = me?.spy;
     const playing = this.state !== 'title' && !!me && me.alive;
+    const drawnNow = playing && !!sp?.drawn;
+    if (drawnNow !== this.wasDrawn) {
+      if (this.state === 'playing') this.audio.holster(drawnNow);
+      this.wasDrawn = drawnNow;
+    }
     const r0 = performance.now();
     this.renderer.render(w, this.cam, {
       dt, alpha,
@@ -521,6 +595,7 @@ class Game {
       moveSpeed: me?.speed ?? 0,
       running: playing && !!sp?.running,
       showViewmodel: playing,
+      activity: playing && me ? me.activity : 'none',
     });
     this.renderMs += (performance.now() - r0 - this.renderMs) * 0.05;
     this.audio.update(dt);
@@ -565,6 +640,13 @@ class Game {
     if (s.suspicion >= CONFIG.suspicion.exposed) this.hint('exposed', 'You are EXPOSED: your hunter sees you outlined in red. Walk calmly to cool off.');
     if (tgt && tgt.alive && tgt.spy!.suspicion >= CONFIG.suspicion.exposed) this.hint('outline', 'Your target is exposed — the red outline gives them away.');
     if (this.matchTime > 40 && s.cdDisguise === 0) this.hint('gadgets', 'Feel watched? E changes your suit, F throws smoke that blocks sight.');
+    const t = this.world.playerInteractable;
+    if (t && t.kind === 'sit') this.hint('sit', 'Press G to sit. Seated agents look harmless and cool off faster.');
+    if (t && t.kind === 'activity') this.hint('activity', 'Press G to blend in here: reading or waiting cools suspicion faster.');
+    if (t && t.kind === 'drop') this.hint('drop', 'G drops you to the tracks: a hidden route if you crouch, but suspicious, and trains kill.');
+    if (t && t.kind === 'climb') this.hint('climb', 'Space or G climbs back up to the platform.');
+    if (t && t.kind === 'board') this.hint('board', 'Press G to board. Ride the train out to shake your hunter.');
+    if (me.blendTimer > CONFIG.interact.blendBonusSeconds && this.world.isBlending(me)) this.hint('blendcap', 'Lingering too long in one spot stops helping. Move on.');
   }
 
   private remoteFootsteps(dt: number): void {
@@ -621,6 +703,9 @@ class Game {
       hasTarget: !!tgt,
       scanner,
       revealed: s.revealTimer > 0,
+      prompt: me.alive && w.playerInteractable ? `${interactLabel(w.playerInteractable, w)}` : null,
+      blending: me.alive && w.blendBonus(me) !== 'none',
+      ride: me.alive && me.away ? { title: this.rideTitle, eta: w.rideEta(me) } : null,
     }, dt);
 
     this.hud.setDeath(!me.alive, this.deathBy, s.respawnTimer);

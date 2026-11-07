@@ -2,7 +2,7 @@
 
 A first-person spy shooter for the browser. Eight assassins in near-identical suits hide in a crowd of civilians inside a grand train station. Each one has a secret target and is hunted by someone they don't know. Acting human keeps you hidden. Acting like a killer gets you found.
 
-Single player: you and 7 AI spies, plus 112 AI civilians, across a 156 m × 54 m station. It has a concourse with a gallery, a west waiting room and restaurant, shop corridors, and three 70 m platforms where trains arrive, dwell and depart. Everything is procedural: no model, texture or audio files.
+Single player: you and 7 AI spies, plus 112 AI civilians, across a 156 m × 54 m station. It has a concourse with a gallery, a west waiting room and restaurant, shop corridors, and three 70 m platforms where trains arrive, dwell and depart. Geometry, textures and most sound are procedural. The only shipped assets are 14 short CC0 gunshot, reload, casing, holster and impact recordings (about 140 KB, loaded after the title screen; see [docs/CREDITS.md](docs/CREDITS.md)). Without them, the game falls back to synthesised sound.
 
 ## Run
 
@@ -29,6 +29,7 @@ Optional URL parameters: `?seed=123` replays a match with the same seed (the see
 | Left mouse | Fire |
 | R | Reload |
 | Q / E / F | Scanner / Disguise / Smoke |
+| G | Interact: sit on a bench or café chair, read the paper, check the departures board, wait at a counter. Press again or move to stop. At a platform edge: drop to the tracks, or climb back up (Space also climbs). At an open train door: board or step off. |
 | Tab | Scoreboard |
 | Esc | Pause |
 | F3 | Debug overlay (FPS, frame time, draw calls, measured ticks/s and walking speed) |
@@ -59,6 +60,9 @@ Ctrl+W is the browser's close-tab shortcut, so C is the safer crouch key. The ga
   - firing: sets it to 100
 
   Walking, idling and crouching let it decay at 20/s. Above 60, your hunter sees you outlined in red. Likewise, you see your target outlined when they are exposed.
+- **Blending in (G).** Sitting lets suspicion decay at 30/s, and a standing activity (newspaper, departures board, counter) at 26/s. Hunters also learn half as much from watching you while you do it. The bonus stops after 25 s in the same spot. You can draw and fire while seated, but you can't move; standing up takes 0.4 s. Drawing, firing or moving ends a standing activity. AI spies sit and read too, so sitting is not proof of innocence.
+- **The tracks.** You can walk off a platform edge or press G to drop onto a track bed, and climb back up with Space or G at any point along the platform (a 0.7 s mantle; a plain jump is too low). It is a sunken route: crouch and people standing back on the platforms can't see you. It is also reckless. Being down there adds +20/s suspicion, nearby civilians panic, and an arriving or departing train sounds its horn and then kills anyone on its bed (no points for anyone; normal respawn). A stopped train is solid and safe to walk around. Civilians and AI spies never go down there.
+- **Trains.** While a train stands at the platform with its doors open, press G at a door to board. Inside you can walk around and sit on the benches (seated blending works there too), and press G at a door to step off. Nobody can see or shoot into a car, and you can't shoot out. Stay aboard when the doors close and you ride out: once the train clears the trainshed you are off the map for at most 40 s, then come back aboard the next arrival on the same track. Your hunter loses your trail and your suspicion resets, but the round clock keeps running and you can't score while away.
 - **Gadgets.**
 
   | Gadget | Key | Cooldown | Effect |
@@ -82,7 +86,7 @@ src/
   ai/              civilian brain, spy brain, perception, path steering
   render/          renderer + quality, merged map meshes, instanced crowd shader, effects, viewmodel
   ui/              HUD, menus, settings (localStorage)
-  audio/           procedural Web Audio engine
+  audio/           Web Audio engine: procedural synthesis, station reverbs, lazy CC0 sample bank
 ```
 
 - **Simulation is separate from rendering.** The simulation (`sim/`, `ai/`, `world/`) never imports Three.js. It mutates plain data and emits events. The render layer reads that state each frame and interpolates between ticks. A Node server can run `World` unchanged, feeding it `SpyIntent`s from the network instead of the keyboard.
@@ -98,7 +102,7 @@ src/
   - Lighting uses no shadow maps: blob shadows go under each character, plus 3 point lights and fog.
   - Effects are pooled buffers, one draw call each.
   - The auto-quality scaler lowers the render scale (1.0 → 0.85 → 0.7) when the 2 s average FPS drops below 50, and raises it again after 5 s above 58.
-- **Trains.** Train movement runs inside the simulation (`sim/trains.ts`), deterministic per seed. Each track cycles through away → arriving (constant deceleration to the buffers) → dwell (doors open) → departing. Moving cars block sight and bullets. Movement-only guards keep people off the track beds without blocking sight lines across them. Announcements, door beeps, braking and horns are driven by the train events.
+- **Trains.** Train movement runs inside the simulation (`sim/trains.ts`), deterministic per seed. Each track cycles through away → arriving (constant deceleration to the buffers) → dwell (doors open) → departing. Moving cars block sight and bullets, and block or kill anyone on their bed. The track beds are real pits 1.2 m below the platforms. Movement-only guards keep civilians and AI spies off them without blocking sight lines across them. Announcements, door beeps, braking and horns are driven by the train events.
 - **Collision.** Agents are circles with a height, tested against AABBs in a 4 m uniform grid. Stairs are ramps. Shooting uses a hitscan raycast against head spheres, body boxes and the AABB grid. It never touches render meshes.
 
 ## Measured

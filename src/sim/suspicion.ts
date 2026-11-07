@@ -11,6 +11,10 @@ export interface SuspicionInput {
   nearSpy: boolean;
   /** Surrounded by panicking civilians (noise covers running). */
   cover?: boolean;
+  /** Seated or busy with an idle activity: suspicion cools off faster. */
+  blend?: 'none' | 'seated' | 'activity';
+  /** Down on a track bed. */
+  onTracks?: boolean;
 }
 
 export function updateSuspicion(s: SpyState, inp: SuspicionInput, dt: number): void {
@@ -19,14 +23,16 @@ export function updateSuspicion(s: SpyState, inp: SuspicionInput, dt: number): v
   if (inp.running) gain += c.run * (inp.cover ? c.runCoverFactor : 1);
   if (inp.drawn) gain += c.drawn;
   if (inp.aiming) gain += c.aim;
+  if (inp.onTracks) gain += c.onTracks;
   if (inp.nearSpy) {
     s.proximityTimer += dt;
     if (s.proximityTimer > c.proximityDelay) gain += c.proximity;
   } else {
     s.proximityTimer = 0;
   }
+  const decay = inp.blend === 'seated' ? c.seatedDecay : inp.blend === 'activity' ? c.activityDecay : c.decay;
   if (gain > 0) s.suspicion += gain * dt;
-  else s.suspicion -= c.decay * dt;
+  else s.suspicion -= decay * dt;
   s.suspicion = Math.max(0, Math.min(c.max, s.suspicion));
 }
 

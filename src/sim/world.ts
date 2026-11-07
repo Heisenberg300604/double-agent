@@ -18,9 +18,11 @@ import { addSuspicion, updateSuspicion } from './suspicion';
 import { emptyIntent, type Agent, type Appearance, type Noise, type SimEvent, type Smoke, type SpyIntent } from './types';
 import { canSee } from '../ai/perception';
 import { civilianThink, panic, standUp } from '../ai/civilianBrain';
+import { activityFor, findInteractable, onTrackBed, type Interactable } from './interact';
 import { followPath, clearGoal } from '../ai/steering';
 import { SpyBrain } from '../ai/spyBrain';
-import { TrainSystem } from './trains';
+import { TrainSystem, TRAIN_LENGTH, carOffset, trainSpeed } from './trains';
+import { CAR_FLOOR_Y, buildTrainLayout, type CarLayout } from '../world/trainCars';
 
 export const BOT_NAMES = ['Kestrel', 'Marlow', 'Juniper', 'Sable', 'Cobalt', 'Wren', 'Ashby', 'Fenwick', 'Linden', 'Hollis'];
 
@@ -34,6 +36,7 @@ export interface WorldOptions {
 }
 
 const M = CONFIG.movement;
+
 const AI_DIVISOR = Math.round(CONFIG.sim.tickRate / CONFIG.sim.aiRate);
 
 export class World {
@@ -53,6 +56,13 @@ export class World {
   /** Events produced since the last drain. */
   events: SimEvent[] = [];
   readonly poiOccupant: Int32Array;
+  /** The player's current interact target (updated once per tick), for the HUD prompt. */
+  playerInteractable: Interactable | null = null;
+  /** Per track: the car layout (train-local), its interior collision, and seat occupancy. */
+  readonly carLayouts: CarLayout[];
+  private readonly interiorCols: CollisionWorld[];
+  private readonly interiorBounds: { minX: number; maxX: number; minZ: number; maxZ: number }[];
+  readonly trainSeatOccupant: Int32Array[];
   time = 0;
   tick = 0;
   timeLeft: number = CONFIG.match.roundSeconds;
@@ -70,6 +80,12 @@ export class World {
     this.contracts = new Contracts(this.rng);
     this.trains = new TrainSystem(this.layout.tracks, new Rng((opts.seed ?? CONFIG.seed) ^ 0x7a1b));
     this.trains.writeColliders(this.col, this.layout.bounds.maxX);
+    this.carLayouts = this.layout.tracks.map((t) => buildTrainLayout(t.z0, t.z1, t.railY));
+    this.interiorBounds = this.layout.tracks.map((t) => ({ minX: -1, maxX: TRAIN_LENGTH + 1, minZ: t.z0 - 1, maxZ: t.z1 + 1 }));
+    this.interiorCols = this.carLayouts.map((c, i) => new CollisionWorld({
+      bounds: this.interiorBounds[i], boxes: c.collide, ramps: [], tracks: [],
+    } as unknown as MapLayout));
+    this.trainSeatOccupant = this.carLayouts.map((c) => new Int32Array(c.seats.length).fill(-1));
     this.poiOccupant = new Int32Array(this.layout.pois.length).fill(-1);
     for (let i = 0; i < 8; i++) {
       this.smokes.push({ active: false, phase: 'flying', x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, timer: 0, radius: 0, owner: -1 });
@@ -125,6 +141,9 @@ export class World {
       yaw: this.rng.range(-Math.PI, Math.PI), pitch: 0, prevYaw: 0,
       wantX: 0, wantZ: 0, wantJump: false, faceYaw: NaN, speed: 0, maxSpeed: M.walkSpeed,
       crouch: false, onGround: true, pose: 'stand', seatX: 0, seatY: 0, seatZ: 0,
+      activity: 'none', blendTimer: 0, standLock: 0,
+      mantleT: 0, mantleDur: 1, mantleFromX: 0, mantleFromY: 0, mantleFromZ: 0, mantleToX: 0, mantleToY: 0, mantleToZ: 0,
+      trackPanicTimer: 0, aboard: -1, localX: 0, trainSeat: -1, away: false,
       animPhase: this.rng.range(0, 6.28), alive: true, health: CONFIG.health.max, deadTime: 0,
       appearance: look, baseAppearance: look,
       path: null, pathIndex: 0, goalX: 0, goalY: 0, goalZ: 0, hasGoal: false,
@@ -221,7 +240,7 @@ export class World {
     return false;
   }
 
-  killAgent(victim: Agent, killer: Agent | null, headshot: boolean): void {
+  killAgent(victim: Agent, killer: Agent | null, headshot: boolean, cause: 'shot' | 'train' = 'shot'): void {
     if (!victim.alive) return;
     victim.alive = false;
     victim.health = 0;
@@ -266,7 +285,7 @@ export class World {
       this.emit({ type: 'reveal', spy: killerSpy.id });
     }
     this.emit({
-      type: 'kill', killer: killer ? killer.id : -1, victim: victim.id, victimKind: victim.kind,
+      type: 'kill', cause, killer: killer ? killer.id : -1, victim: victim.id, victimKind: victim.kind,
       relation, points, headshot, unseen,
     });
   }
@@ -288,6 +307,7 @@ export class World {
   }
 
   private respawnSpy(a: Agent): void {
+    this.leaveTrain(a);
     const sp = this.pickSpawn(a.id);
     const s = a.spy!;
     a.x = a.px = sp.x;
@@ -297,6 +317,12 @@ export class World {
     a.alive = true;
     a.health = CONFIG.health.max;
     a.pose = 'stand';
+    a.activity = 'none';
+    a.blendTimer = 0;
+    a.standLock = 0;
+    a.mantleT = 0;
+    this.leaveTrain(a);
+    this.releasePoi(a);
     a.crouch = false;
     a.onGround = true;
     a.appearance = a.baseAppearance;
@@ -343,26 +369,367 @@ export class World {
     this.emit({ type: 'respawn', agent: a.id });
   }
 
+  // ------------------------------------------------------------------ blending (sit / activities)
+  /** Is the agent seated or busy with a standing activity? */
+  isBlending(a: Agent): boolean {
+    return a.pose === 'sit' || a.activity !== 'none';
+  }
+
+  /** Sit on a free seat POI. Returns false if it is taken. */
+  sitDown(a: Agent, poi: number): boolean {
+    const p = this.layout.pois[poi];
+    if (!p.seat || !a.alive) return false;
+    const occ = this.poiOccupant[poi];
+    if (occ >= 0 && occ !== a.id) return false;
+    this.claimPoi(a, poi);
+    a.pose = 'sit';
+    a.activity = 'none';
+    a.blendTimer = 0;
+    a.crouch = false;
+    a.seatX = p.seat.x;
+    a.seatY = p.seat.y;
+    a.seatZ = p.seat.z;
+    a.vx = a.vy = a.vz = 0;
+    // The player keeps free look; bots face the seat's direction.
+    a.faceYaw = a.isPlayer ? NaN : p.yaw;
+    return true;
+  }
+
+  /** Start a standing activity at a POI (newspaper stand, info board, café counter). */
+  startActivity(a: Agent, poi: number): boolean {
+    const p = this.layout.pois[poi];
+    const occ = this.poiOccupant[poi];
+    if (!a.alive || p.seat || (occ >= 0 && occ !== a.id)) return false;
+    const kind = activityFor(p.kind);
+    if (kind === 'none') return false;
+    this.claimPoi(a, poi);
+    a.activity = kind;
+    a.blendTimer = 0;
+    a.crouch = false;
+    if (!a.isPlayer) a.faceYaw = p.yaw;
+    return true;
+  }
+
+  /** Stand up or stop the activity, and release the spot. */
+  stopBlending(a: Agent): void {
+    if (a.pose === 'sit' && a.trainSeat >= 0 && a.aboard >= 0) {
+      const seat = this.carLayouts[a.aboard].seats[a.trainSeat];
+      this.trainSeatOccupant[a.aboard][a.trainSeat] = -1;
+      a.trainSeat = -1;
+      a.pose = 'stand';
+      a.localX = seat.x;
+      a.z = seat.standZ;
+      a.x = this.trains.trains[a.aboard].frontX + a.localX;
+      a.standLock = CONFIG.interact.standUpTime;
+    } else if (a.pose === 'sit') {
+      standUp(this, a);
+      a.standLock = CONFIG.interact.standUpTime;
+    }
+    a.activity = 'none';
+    a.blendTimer = 0;
+    this.releasePoi(a);
+    if (a.isPlayer) a.faceYaw = NaN;
+  }
+
+  // ------------------------------------------------------------------ riding trains
+  private teleport(a: Agent, x: number, y: number, z: number): void {
+    a.x = a.px = x;
+    a.y = a.py = y;
+    a.z = a.pz = z;
+    a.vx = a.vy = a.vz = 0;
+    a.onGround = true;
+  }
+
+  /** Step aboard through an open door (train-local placement just inside it). */
+  board(a: Agent, track: number, door: number): void {
+    const s = this.trains.trains[track];
+    const d = this.carLayouts[track].doors[door];
+    this.stopBlending(a);
+    a.aboard = track;
+    a.localX = d.x;
+    a.crouch = false;
+    this.teleport(a, s.frontX + d.x, CAR_FLOOR_Y, d.z - d.side * 0.6);
+    this.emit({ type: 'ride', agent: a.id, phase: 'board', track, service: s.service });
+  }
+
+  /** Step off onto the platform outside a door. */
+  alight(a: Agent, door: number): void {
+    const track = a.aboard;
+    const s = this.trains.trains[track];
+    const d = this.carLayouts[track].doors[door];
+    this.stopBlending(a);
+    a.aboard = -1;
+    this.teleport(a, s.frontX + d.x, 0, d.z + d.side * 0.6);
+    this.emit({ type: 'ride', agent: a.id, phase: 'alight', track, service: s.service });
+  }
+
+  /** Sit on a seat inside the train the agent is aboard. */
+  sitInTrain(a: Agent, seat: number): boolean {
+    if (a.aboard < 0) return false;
+    const occ = this.trainSeatOccupant[a.aboard];
+    if (occ[seat] >= 0 && occ[seat] !== a.id) return false;
+    const st = this.carLayouts[a.aboard].seats[seat];
+    occ[seat] = a.id;
+    a.trainSeat = seat;
+    a.pose = 'sit';
+    a.activity = 'none';
+    a.blendTimer = 0;
+    a.crouch = false;
+    a.seatX = st.x;
+    a.seatY = st.y;
+    a.seatZ = st.z;
+    a.faceYaw = NaN;
+    return true;
+  }
+
+  /** Forget any train state (death, respawn). */
+  private leaveTrain(a: Agent): void {
+    if (a.aboard >= 0 && a.trainSeat >= 0) this.trainSeatOccupant[a.aboard][a.trainSeat] = -1;
+    a.aboard = -1;
+    a.trainSeat = -1;
+    a.away = false;
+  }
+
+  /**
+   * Keep riders' world x on their train; take them off the map once the train
+   * clears the trainshed, and bring them back (lock lost, suspicion reset) on
+   * the next arrival.
+   */
+  private updateRiders(): void {
+    const T = CONFIG.trains;
+    const edge = this.layout.bounds.maxX + T.offMapBeyond;
+    for (const a of this.spies) {
+      if (a.aboard < 0) continue;
+      const s = this.trains.trains[a.aboard];
+      a.x = s.frontX + a.localX;
+      if (!a.alive) continue;
+      if (!a.away && s.phase === 'departing' && a.x > edge) {
+        a.away = true;
+        const sp = a.spy!;
+        sp.drawn = sp.aiming = false;
+        sp.firePending = false;
+        this.emit({ type: 'ride', agent: a.id, phase: 'away', track: a.aboard, service: s.service });
+      }
+      if (a.away && s.phase === 'away') {
+        const cap = T.rideMaxOffMap - this.rideExitTime(a.aboard, a.localX) - this.rideEnterTime(a.aboard, a.localX);
+        if (s.duration > cap) s.duration = Math.max(1, cap);
+      }
+      if (a.away && s.phase === 'arriving' && a.x < edge) {
+        a.away = false;
+        a.spy!.suspicion = 0;
+        a.spy!.proximityTimer = 0;
+        for (const brain of this.brains.values()) brain.forget(a.id);
+        this.emit({ type: 'ride', agent: a.id, phase: 'return', track: a.aboard, service: s.service });
+      }
+    }
+  }
+
+  /** Fraction (0..1, in time) of the approach at which a rider at train-local x crosses the map edge. */
+  private edgeFraction(track: number, localX: number): number {
+    const T = CONFIG.trains;
+    const dist = this.layout.bounds.maxX + T.offMapBeyond - localX - this.layout.tracks[track].stopX;
+    return Math.sqrt(Math.max(0, Math.min(1, dist / T.approachDistance)));
+  }
+
+  /** Departing: seconds from when the rider clears the map edge until the train is 'away'. */
+  private rideExitTime(track: number, localX: number): number {
+    return CONFIG.trains.departTime * (1 - this.edgeFraction(track, localX));
+  }
+
+  /** Arriving: seconds from the start of the approach until the rider is back inside the map edge. */
+  private rideEnterTime(track: number, localX: number): number {
+    return CONFIG.trains.arriveTime * (1 - this.edgeFraction(track, localX));
+  }
+
+  /** Seconds until an away rider is back on the map (estimate), or -1 if not away. */
+  rideEta(a: Agent): number {
+    if (!a.away || a.aboard < 0) return -1;
+    const s = this.trains.trains[a.aboard];
+    const T = CONFIG.trains;
+    const enter = this.rideEnterTime(a.aboard, a.localX);
+    if (s.phase === 'departing') return T.departTime - s.t + Math.min(T.awayMax, T.rideMaxOffMap - this.rideExitTime(a.aboard, a.localX) - enter) + enter;
+    if (s.phase === 'away') return s.duration - s.t + enter;
+    if (s.phase === 'arriving') return Math.max(0, enter - s.t);
+    return 0;
+  }
+
+  // ------------------------------------------------------------------ tracks
+  /** Is there a train car (stationary or moving) over this point of a track bed? */
+  trainCarAt(x: number, z: number, margin = 0): boolean {
+    const T = CONFIG.trains;
+    for (const s of this.trains.trains) {
+      const tr = this.layout.tracks[s.track];
+      if (z < tr.z0 - margin || z > tr.z1 + margin) continue;
+      for (let i = 0; i < T.cars; i++) {
+        const x0 = s.frontX + carOffset(i);
+        if (x >= x0 - margin && x <= x0 + T.carLength + margin) return true;
+      }
+    }
+    return false;
+  }
+
+  /** Begin a climb up from the bed, or a controlled drop down to it. */
+  startMantle(a: Agent, t: Interactable): void {
+    const up = t.kind === 'climb';
+    this.stopBlending(a);
+    a.mantleDur = up ? CONFIG.tracks.mantleTime : CONFIG.tracks.dropTime;
+    a.mantleT = a.mantleDur;
+    a.mantleFromX = a.x;
+    a.mantleFromY = a.y;
+    a.mantleFromZ = a.z;
+    a.mantleToX = t.x!;
+    a.mantleToY = t.y!;
+    a.mantleToZ = t.z!;
+    a.crouch = false;
+    a.vx = a.vy = a.vz = 0;
+    this.emit({ type: 'mantle', agent: a.id, up });
+  }
+
+  /**
+   * Train cars vs spies (the only agents that can reach a bed): a moving car
+   * kills anyone on its bed; otherwise cars are solid to walk around.
+   */
+  private trainCollisions(): void {
+    const T = CONFIG.trains;
+    const r = CONFIG.body.radius;
+    for (const a of this.spies) {
+      if (!a.alive || a.mantleT > 0 || a.aboard >= 0) continue;
+      for (const s of this.trains.trains) {
+        const tr = this.layout.tracks[s.track];
+        if (a.z < tr.z0 - r || a.z > tr.z1 + r) continue;
+        const moving = trainSpeed(s) > CONFIG.tracks.killSpeed;
+        for (let i = 0; i < T.cars; i++) {
+          const x0 = s.frontX + carOffset(i), x1 = x0 + T.carLength;
+          const z0 = tr.z0 + 0.06, z1 = tr.z1 - 0.06;
+          const px = Math.min(x1, Math.max(x0, a.x)), pz = Math.min(z1, Math.max(z0, a.z));
+          const dx = a.x - px, dz = a.z - pz;
+          const d2 = dx * dx + dz * dz;
+          if (d2 >= r * r) continue;
+          if (moving && onTrackBed(this, a)) {
+            this.killAgent(a, null, false, 'train');
+            break;
+          }
+          // Solid: push out through the nearest face.
+          if (d2 > 1e-10) {
+            const d = Math.sqrt(d2);
+            a.x += (dx / d) * (r - d + 1e-4);
+            a.z += (dz / d) * (r - d + 1e-4);
+          } else {
+            const m = Math.min(a.x - x0, x1 - a.x, a.z - z0, z1 - a.z);
+            if (m === a.x - x0) a.x = x0 - r - 1e-4;
+            else if (m === x1 - a.x) a.x = x1 + r + 1e-4;
+            else if (m === a.z - z0) a.z = z0 - r - 1e-4;
+            else a.z = z1 + r + 1e-4;
+          }
+        }
+        if (!a.alive) break;
+      }
+    }
+  }
+
+  /** Horn at people on the bed ahead of a moving train; nearby civilians panic. */
+  private trackHazards(dt: number): void {
+    const H = CONFIG.tracks;
+    for (const a of this.spies) {
+      if (!a.alive || !onTrackBed(this, a)) {
+        a.trackPanicTimer = 0;
+        continue;
+      }
+      a.trackPanicTimer -= dt;
+      if (a.trackPanicTimer <= 0) {
+        a.trackPanicTimer = H.panicInterval;
+        this.hash.query(a.x, a.z, H.panicRadius, this.nbr);
+        for (const id of this.nbr) {
+          const o = this.agents[id];
+          if (o.civ && o.alive && o.civ.state !== 'panic' && Math.hypot(o.x - a.x, o.z - a.z) < H.panicRadius) panic(this, o, a.x, a.z);
+        }
+      }
+      for (const s of this.trains.trains) {
+        const tr = this.layout.tracks[s.track];
+        if (s.hornCooldown > 0 || a.z < tr.z0 || a.z > tr.z1) continue;
+        // Arriving trains move west (front end leads); departing trains east (rear end leads).
+        const ahead = s.phase === 'arriving' ? s.frontX - a.x : s.phase === 'departing' ? a.x - (s.frontX + carOffset(CONFIG.trains.cars - 1) + CONFIG.trains.carLength) : -1;
+        if (ahead < 0 || ahead > H.hornRange) continue;
+        s.hornCooldown = H.hornCooldown;
+        this.emit({ type: 'trainHorn', track: s.track, x: s.phase === 'arriving' ? s.frontX : a.x + ahead, z: (tr.z0 + tr.z1) / 2 });
+      }
+    }
+  }
+
+  /** The player's interact key and the "any movement cancels" rules. */
+  private playerBlending(a: Agent, it: SpyIntent): void {
+    const s = a.spy!;
+    if (a.mantleT > 0) {
+      this.playerInteractable = null;
+      return;
+    }
+    const moving = Math.hypot(it.moveX, it.moveZ) > 0.1 || it.jump;
+    if (this.isBlending(a)) {
+      // Drawing or firing cancels a standing activity; a seated agent may still shoot.
+      const drawCancels = a.activity !== 'none' && (it.aim || it.fire || s.drawn);
+      if (it.interact || moving || drawCancels) {
+        this.stopBlending(a);
+        // The same press never re-sits; the prompt reappears next tick.
+        this.playerInteractable = null;
+      } else {
+        this.playerInteractable = { kind: a.pose === 'sit' ? 'stand' : 'stop', poi: a.occupiedPoi };
+      }
+      return;
+    }
+    this.playerInteractable = findInteractable(this, a);
+    const t0 = this.playerInteractable;
+    // Space also climbs out (a plain jump is too low to reach the platform).
+    if (t0 && t0.kind === 'climb' && it.jump) {
+      it.jump = false;
+      it.interact = true;
+    }
+    if (it.interact && this.playerInteractable) {
+      const t = this.playerInteractable;
+      if (t.kind === 'climb' || t.kind === 'drop') {
+        this.startMantle(a, t);
+        this.playerInteractable = null;
+        return;
+      }
+      if (t.kind === 'board' || t.kind === 'alight') {
+        if (t.kind === 'board') this.board(a, t.train!, t.door!);
+        else this.alight(a, t.door!);
+        this.playerInteractable = null;
+        return;
+      }
+      if (t.kind === 'sit' && t.train !== undefined) this.sitInTrain(a, t.poi);
+      else if (t.kind === 'sit') this.sitDown(a, t.poi);
+      else if (t.kind === 'activity') this.startActivity(a, t.poi);
+      if (this.isBlending(a)) this.playerInteractable = { kind: a.pose === 'sit' ? 'stand' : 'stop', poi: a.occupiedPoi };
+    }
+  }
+
   // ------------------------------------------------------------------ spy actions
   private applySpyIntent(a: Agent, dt: number): void {
     const s = a.spy!;
     const it = s.intent;
     const W = CONFIG.weapon;
-    if (!a.alive) {
-      it.fire = it.reload = it.scanner = it.disguise = it.smoke = it.jump = false;
+    if (!a.alive || a.away) {
+      it.fire = it.reload = it.scanner = it.disguise = it.smoke = it.jump = it.interact = false;
+      if (a.isPlayer) this.playerInteractable = null;
+      a.wantX = a.wantZ = 0;
       return;
     }
     if (a.isPlayer) {
       a.yaw = it.yaw;
       a.pitch = it.pitch;
-      a.crouch = it.mode === 'crouch';
+      this.playerBlending(a, it);
+      it.interact = false;
+      a.standLock = Math.max(0, a.standLock - dt);
+      const blending = this.isBlending(a);
+      const locked = blending || a.standLock > 0 || a.mantleT > 0;
+      a.crouch = !blending && it.mode === 'crouch';
       const speed = it.mode === 'run' ? M.runSpeed : it.mode === 'crouch' ? M.crouchSpeed : M.walkSpeed;
       a.maxSpeed = speed;
-      const ml = Math.hypot(it.moveX, it.moveZ);
+      const ml = locked ? 0 : Math.hypot(it.moveX, it.moveZ);
       const k = ml > 1 ? 1 / ml : 1;
-      a.wantX = it.moveX * k * speed;
-      a.wantZ = it.moveZ * k * speed;
-      a.wantJump = it.jump;
+      a.wantX = locked ? 0 : it.moveX * k * speed;
+      a.wantZ = locked ? 0 : it.moveZ * k * speed;
+      a.wantJump = it.jump && !locked && a.aboard < 0;
       s.running = it.mode === 'run' && ml > 0.1 && a.speed > M.walkSpeed + 0.4;
     } else {
       s.running = a.speed > M.walkSpeed + 0.8;
@@ -403,7 +770,7 @@ export class World {
     if (s.firePending && s.drawTimer <= 0 && s.fireCooldown <= 0) {
       s.firePending = false;
       if (s.reloadTimer > 0) {
-        // ignore while reloading
+        this.emit({ type: 'dryFire', spy: a.id });
       } else if (s.ammo <= 0) {
         s.reloadTimer = W.reloadTime;
         this.emit({ type: 'reload', spy: a.id });
@@ -460,10 +827,11 @@ export class World {
     // Trains move first so sight lines and shots see the current cars.
     this.trains.step(dt, (e) => this.emit(e));
     this.trains.writeColliders(this.col, this.layout.bounds.maxX);
+    this.updateRiders();
 
     // Spatial hash.
     this.hash.clear();
-    for (const a of this.agents) if (a.alive) this.hash.insert(a.id, a.x, a.z);
+    for (const a of this.agents) if (a.alive && !a.away) this.hash.insert(a.id, a.x, a.z);
 
     // AI thinking, staggered so each agent thinks at aiRate.
     const thinkDt = AI_DIVISOR * dt;
@@ -498,21 +866,40 @@ export class World {
 
     // Movement.
     for (const a of this.agents) {
-      const jumped = stepMovement(a, this.col, dt, this.layout.bounds);
+      let jumped: boolean;
+      if (a.aboard >= 0) {
+        // Inside a train: move in train-local space against the car interior.
+        const frontX = this.trains.trains[a.aboard].frontX;
+        a.x = a.localX;
+        jumped = stepMovement(a, this.interiorCols[a.aboard], dt, this.interiorBounds[a.aboard]);
+        a.localX = a.x;
+        a.x = frontX + a.localX;
+      } else {
+        jumped = stepMovement(a, this.col, dt, this.layout.bounds);
+      }
       if (jumped && a.spy) {
         addSuspicion(a.spy, CONFIG.suspicion.jump);
         this.emit({ type: 'jump', agent: a.id });
       }
     }
-    if (this.player && this.player.alive) this.pushPlayerOutOfCrowd(this.player);
+    if (this.player && this.player.alive && this.player.pose !== 'sit' && this.player.mantleT <= 0 && this.player.aboard < 0) this.pushPlayerOutOfCrowd(this.player);
+    this.trainCollisions();
+    this.trackHazards(dt);
+
+    // Blending timers (the bonus stops after a while in one spot).
+    for (const a of this.agents) {
+      if (a.alive && this.isBlending(a)) a.blendTimer += dt;
+    }
 
     // Suspicion.
     for (const s of this.spies) {
-      if (!s.alive) continue;
+      if (!s.alive || s.away) continue;
       const sp = s.spy!;
       updateSuspicion(sp, {
         running: sp.running, drawn: sp.drawn, aiming: sp.aiming, nearSpy: this.nearOtherSpy(s),
         cover: sp.running && this.inPanickingCrowd(s),
+        blend: this.blendBonus(s),
+        onTracks: onTrackBed(this, s),
       }, dt);
     }
 
@@ -574,14 +961,22 @@ export class World {
     for (const id of this.nbr) {
       if (id === p.id) continue;
       const o = this.agents[id];
-      if (!o.alive || Math.abs(o.y - p.y) > 1.2) continue;
+      if (!o.alive || Math.abs(o.y - p.y) > 0.9) continue;
       const dx = p.x - o.x, dz = p.z - o.z;
       const d = Math.hypot(dx, dz);
       if (d >= R || d < 1e-4) continue;
       p.x += (dx / d) * (R - d);
       p.z += (dz / d) * (R - d);
     }
-    this.col.resolveCircle(p, CONFIG.body.radius, bodyHeight(p));
+    this.col.resolveCircle(p, CONFIG.body.radius, bodyHeight(p), true);
+  }
+
+  /** Which blending bonus applies to this agent right now, if any. */
+  blendBonus(a: Agent): 'none' | 'seated' | 'activity' {
+    if (!a.alive || a.blendTimer > CONFIG.interact.blendBonusSeconds) return 'none';
+    if (a.pose === 'sit') return 'seated';
+    if (a.activity !== 'none') return 'activity';
+    return 'none';
   }
 
   private nearOtherSpy(a: Agent): boolean {

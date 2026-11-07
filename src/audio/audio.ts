@@ -1,5 +1,13 @@
-// Procedural Web Audio: every sound is synthesised from noise and oscillators.
-// Positional sounds use distance-based gain + stereo pan relative to the listener.
+// Web Audio engine. Gunshots, reloads, impacts, casings and holster sounds use
+// recorded CC0 samples when they have loaded (see samples.ts); everything else,
+// and every sample-backed sound before or without its samples, is synthesised
+// from noise and oscillators. Positional sounds use distance-based gain + stereo
+// pan relative to the listener; far gunshots and impacts are also low-passed and
+// delayed. Two procedural station reverbs (the vaulted concourse and the
+// shorter platforms) crossfade with where the listener is.
+
+import { CONFIG } from '../config';
+import { SampleBank, reloadSchedule, type SampleName } from './samples';
 
 export interface Listener {
   x: number;
@@ -18,6 +26,11 @@ export class AudioEngine {
   private ambient: GainNode | null = null;
   private reverb!: ConvolverNode;
   private reverbSend!: GainNode;
+  /** Wet input for sounds that should ring in the station (shots, impacts). */
+  private wetIn!: GainNode;
+  private hallGain!: GainNode;
+  private platformGain!: GainNode;
+  readonly samples = new SampleBank();
   private crowdGain: GainNode | null = null;
   private crowdLayers: { gain: GainNode; rate: number; phase: number }[] = [];
   private patterTimer = 0;
@@ -46,12 +59,23 @@ export class AudioEngine {
     this.master.connect(comp).connect(this.ctx.destination);
     this.sfx = this.ctx.createGain();
     this.sfx.connect(this.master);
-    // Big-hall reverb from a procedurally generated impulse response.
+    // Station reverb from procedurally generated impulse responses: a long, bright
+    // tail under the concourse vault and a shorter, darker one on the platforms.
     this.reverb = this.ctx.createConvolver();
-    this.reverb.buffer = this.impulse(2.6, 2.2);
+    this.reverb.buffer = this.impulse(2.2, 2.0, 0);
+    const platformVerb = this.ctx.createConvolver();
+    platformVerb.buffer = this.impulse(1.2, 2.8, 0.55);
+    this.hallGain = this.ctx.createGain();
+    this.platformGain = this.ctx.createGain();
+    this.platformGain.gain.value = 0;
+    this.wetIn = this.ctx.createGain();
+    this.wetIn.connect(this.reverb).connect(this.hallGain).connect(this.master);
+    this.wetIn.connect(platformVerb).connect(this.platformGain).connect(this.master);
+    // Everything gets a little room; shots and impacts send much more through out(…, wet).
     this.reverbSend = this.ctx.createGain();
-    this.reverbSend.gain.value = 0.32;
-    this.sfx.connect(this.reverbSend).connect(this.reverb).connect(this.master);
+    this.reverbSend.gain.value = 0.2;
+    this.sfx.connect(this.reverbSend).connect(this.wetIn);
+    this.samples.attach(this.ctx);
     const len = this.ctx.sampleRate * 2;
     this.noise = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
     const d = this.noise.getChannelData(0);
@@ -87,6 +111,8 @@ export class AudioEngine {
     // Crowd chatter: formant bands with syllable-rate amplitude modulation.
     const crowdLevel = (0.35 + 0.65 * this.density) * (1 - 0.55 * this.platformness);
     if (this.crowdGain) this.crowdGain.gain.setTargetAtTime(crowdLevel, ctx.currentTime, 0.4);
+    this.hallGain.gain.setTargetAtTime(1 - this.platformness, ctx.currentTime, 0.5);
+    this.platformGain.gain.setTargetAtTime(this.platformness, ctx.currentTime, 0.5);
     for (const l of this.crowdLayers) {
       l.phase += dt * l.rate * (0.7 + Math.random() * 0.6);
       const syll = Math.max(0, Math.sin(l.phase)) * (0.5 + 0.5 * Math.sin(l.phase * 0.13 + 1));
@@ -100,20 +126,45 @@ export class AudioEngine {
     }
   }
 
-  private impulse(seconds: number, decay: number): AudioBuffer {
+  /** darkness 0..1: one-pole low-pass on the tail (stone platforms absorb highs sooner). */
+  private impulse(seconds: number, decay: number, darkness: number): AudioBuffer {
     const ctx = this.ctx!;
     const len = Math.floor(ctx.sampleRate * seconds);
     const buf = ctx.createBuffer(2, len, ctx.sampleRate);
     for (let ch = 0; ch < 2; ch++) {
       const d = buf.getChannelData(ch);
+      let lp = 0;
       for (let i = 0; i < len; i++) {
         const t = i / len;
-        // Early reflections + diffuse tail.
+        // Early reflections + diffuse tail that darkens as it decays.
         const early = i < ctx.sampleRate * 0.08 && Math.random() < 0.004 ? 0.8 : 0;
-        d[i] = ((Math.random() * 2 - 1) * Math.pow(1 - t, decay) + early) * 0.6;
+        const n = Math.random() * 2 - 1;
+        const k = Math.min(0.97, darkness * (0.4 + 0.6 * t));
+        lp = lp * k + n * (1 - k);
+        d[i] = (lp * Math.pow(1 - t, decay) + early) * 0.6;
       }
     }
     return buf;
+  }
+
+  /** Begin fetching the recorded samples (call once the title screen is up). */
+  preloadSamples(): void {
+    this.samples.prefetch();
+  }
+
+  /** Play a sample into `dest`; false if it isn't loaded (caller falls back). */
+  private sample(name: SampleName, dest: AudioNode, when: number, gain = 1, rate = 1): boolean {
+    const buf = this.samples.get(name);
+    if (!buf) return false;
+    const ctx = this.ctx!;
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    src.playbackRate.value = rate;
+    const g = ctx.createGain();
+    g.gain.value = gain;
+    src.connect(g).connect(dest);
+    src.start(when);
+    return true;
   }
 
   // ---------------------------------------------------------------- helpers
@@ -125,25 +176,42 @@ export class AudioEngine {
     return s;
   }
 
-  /** Output node for a sound at a world position (or non-positional if pos omitted). */
-  private out(pos?: { x: number; y: number; z: number }, range = 30, gain = 1): AudioNode | null {
+  /**
+   * Output node for a sound at a world position (or non-positional if pos omitted).
+   * `wet` sends extra signal into the station reverb. `far` muffles and delays the
+   * sound with distance (a far shot is a dull pop that echoes off the vault).
+   */
+  private out(pos?: { x: number; y: number; z: number }, range = 30, gain = 1, wet = 0, far = false): AudioNode | null {
     if (!this.ready) return null;
     const ctx = this.ctx!;
     const g = ctx.createGain();
     let vol = gain;
     let pan = 0;
+    let d = 0;
     if (pos) {
       const l = this.listener;
       const dx = pos.x - l.x, dy = pos.y - l.y, dz = pos.z - l.z;
-      const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      d = Math.sqrt(dx * dx + dy * dy + dz * dz);
       if (d > range) return null;
       vol *= Math.pow(1 - d / range, 1.6) / (1 + d * 0.06);
       // Listener right vector for yaw (camera looks toward -Z at yaw 0).
       const rx = Math.cos(l.yaw), rz = -Math.sin(l.yaw);
       pan = d > 0.01 ? Math.max(-1, Math.min(1, (dx * rx + dz * rz) / d)) * 0.85 : 0;
     }
-    if (vol < 0.005) return null;
+    // Far sounds keep more of their reverb than their direct sound.
+    const wetVol = wet * gain * (pos ? Math.pow(1 - d / range, 0.7) : 1);
+    if (vol < 0.005 && wetVol < 0.005) return null;
     g.gain.value = vol;
+    let head: AudioNode = g;
+    if (far && d > 3) {
+      const lp = ctx.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.frequency.value = Math.max(650, 14000 * Math.exp(-d / 9));
+      const delay = ctx.createDelay(0.5);
+      delay.delayTime.value = Math.min(0.45, d / 343 + 0.01);
+      lp.connect(delay).connect(g);
+      head = lp;
+    }
     if (ctx.createStereoPanner) {
       const p = ctx.createStereoPanner();
       p.pan.value = pan;
@@ -151,7 +219,12 @@ export class AudioEngine {
     } else {
       g.connect(this.sfx);
     }
-    return g;
+    if (wetVol > 0.005) {
+      const w = ctx.createGain();
+      w.gain.value = wetVol;
+      head.connect(w).connect(this.wetIn);
+    }
+    return head;
   }
 
   private env(g: GainNode, t: number, a: number, peak: number, decay: number): void {
@@ -162,9 +235,16 @@ export class AudioEngine {
 
   // ---------------------------------------------------------------- sounds
   shot(pos?: { x: number; y: number; z: number }, own = false): void {
-    const o = this.out(pos, 40, own ? 0.75 : 1);
+    const o = this.out(pos, 40, own ? 0.75 : 1, own ? 0.55 : 0.8, !own);
     if (!o) return;
     const ctx = this.ctx!, t = ctx.currentTime;
+    // Recorded suppressed pistol: one of three takes with a ±4% pitch spread
+    // (Math.random is the audio RNG; the simulation's RNG is never touched here).
+    const take = (['shot_suppressed_1', 'shot_suppressed_2', 'shot_suppressed_3'] as const)[Math.floor(Math.random() * 3)];
+    if (this.sample(take, o, t, own ? 0.95 : 1.1, 0.96 + Math.random() * 0.08)) {
+      if (own) this.casing();
+      return;
+    }
     const n = this.noiseSrc();
     const bp = ctx.createBiquadFilter();
     bp.type = 'bandpass';
@@ -208,10 +288,75 @@ export class AudioEngine {
     const o = this.out(undefined, 0, 0.8);
     if (!o) return;
     const t = this.ctx!.currentTime;
-    this.click(t + 0.1, 1800, 0.5, o);
-    this.click(t + 0.55, 1400, 0.5, o);
-    this.click(t + 1.25, 2600, 0.7, o);
-    this.click(t + 1.33, 2000, 0.5, o);
+    const W = CONFIG.weapon;
+    const at = reloadSchedule(W.reloadTime, W.reloadAnim);
+    // Each step falls back to a synthesised click at the same moment.
+    if (!this.sample('mag_out', o, t + at.mag_out, 0.8)) this.click(t + W.reloadAnim.dropStart * W.reloadTime, 1800, 0.5, o);
+    if (!this.sample('mag_in', o, t + at.mag_in, 0.9)) this.click(t + W.reloadAnim.seated * W.reloadTime, 1400, 0.5, o);
+    if (!this.sample('slide_release', o, t + at.slide_release, 0.9)) {
+      this.click(t + W.reloadAnim.slide * W.reloadTime - 0.05, 2600, 0.7, o);
+      this.click(t + W.reloadAnim.slide * W.reloadTime + 0.03, 2000, 0.5, o);
+    }
+  }
+
+  /** Brass casing hitting the stone floor after an own shot. */
+  private casing(): void {
+    const o = this.out(undefined, 0, 0.35);
+    if (!o) return;
+    const t = this.ctx!.currentTime + 0.42 + Math.random() * 0.12;
+    const take = Math.random() < 0.5 ? 'casing_drop_1' : 'casing_drop_2';
+    if (!this.sample(take, o, t, 1, 0.95 + Math.random() * 0.1)) {
+      this.click(t, 5200, 0.12, o);
+      this.click(t + 0.09, 4800, 0.07, o);
+    }
+  }
+
+  /** Pulling the trigger on an empty or reloading gun. */
+  dryFire(): void {
+    const o = this.out(undefined, 0, 0.7);
+    if (!o) return;
+    const t = this.ctx!.currentTime;
+    if (!this.sample('dry_fire', o, t)) this.click(t, 2200, 0.4, o);
+  }
+
+  /** Drawing or holstering the pistol (leather and cloth). */
+  holster(draw: boolean): void {
+    const o = this.out(undefined, 0, draw ? 0.45 : 0.35);
+    if (!o) return;
+    const t = this.ctx!.currentTime;
+    if (this.sample(draw ? 'draw' : 'holster', o, t)) return;
+    const n = this.noiseSrc();
+    const bp = this.ctx!.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = 1400;
+    bp.Q.value = 0.7;
+    const g = this.ctx!.createGain();
+    this.env(g, t, 0.03, 0.25, 0.18);
+    n.connect(bp).connect(g).connect(o);
+    n.start(t);
+    n.stop(t + 0.25);
+  }
+
+  /** A bullet hitting something: stone (walls, floors), metal (trains, rails) or a body. */
+  impact(pos: { x: number; y: number; z: number }, kind: 'stone' | 'metal' | 'body'): void {
+    const o = this.out(pos, 35, kind === 'body' ? 0.7 : 0.55, kind === 'body' ? 0.2 : 0.5, true);
+    if (!o) return;
+    const t = this.ctx!.currentTime;
+    const name = kind === 'body' ? 'impact_body' : kind === 'metal' ? 'impact_metal' : 'impact_stone';
+    if (this.sample(name, o, t, 1, 0.94 + Math.random() * 0.12)) return;
+    if (kind === 'body') {
+      const n = this.noiseSrc();
+      const lp = this.ctx!.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.frequency.value = 700;
+      const g = this.ctx!.createGain();
+      this.env(g, t, 0.002, 0.8, 0.08);
+      n.connect(lp).connect(g).connect(o);
+      n.start(t);
+      n.stop(t + 0.12);
+    } else {
+      this.click(t, kind === 'metal' ? 4200 : 2600, 0.5, o);
+    }
   }
 
   footstep(pos: { x: number; y: number; z: number } | undefined, loud: boolean): void {
@@ -421,6 +566,37 @@ export class AudioEngine {
     const t = this.ctx!.currentTime;
     this.horn(o, t, 0.9);
     this.rumble(o, t + 1, 5, 4, seconds - 9, 0.35);
+  }
+
+  /** A warning horn from a moving train (someone is on the tracks). */
+  trainHorn(pos: { x: number; y: number; z: number }): void {
+    const o = this.out(pos, 120, 1.2);
+    if (!o) return;
+    const t = this.ctx!.currentTime;
+    this.horn(o, t, 0.6);
+    this.horn(o, t + 0.85, 1.4);
+  }
+
+  /** Brakes locking up: a long metallic screech. */
+  screech(pos: { x: number; y: number; z: number }): void {
+    const o = this.out(pos, 80, 1);
+    if (!o) return;
+    const ctx = this.ctx!, t = ctx.currentTime;
+    const sq = ctx.createOscillator();
+    sq.type = 'sawtooth';
+    sq.frequency.setValueAtTime(3200, t);
+    sq.frequency.linearRampToValueAtTime(2100, t + 2.2);
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = 2700;
+    bp.Q.value = 7;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(0.06, t + 0.08);
+    g.gain.linearRampToValueAtTime(0.0001, t + 2.4);
+    sq.connect(bp).connect(g).connect(o);
+    sq.start(t);
+    sq.stop(t + 2.5);
   }
 
   /** Door-closing warning beeps from a train. */

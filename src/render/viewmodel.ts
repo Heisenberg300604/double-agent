@@ -6,6 +6,8 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { glowTexture } from './textures';
+import type { Activity } from '../sim/types';
+import { CONFIG } from '../config';
 
 function box(w: number, h: number, d: number, x: number, y: number, z: number): THREE.BufferGeometry {
   const g = new THREE.BoxGeometry(w, h, d).toNonIndexed();
@@ -43,6 +45,12 @@ export class Viewmodel {
   private readonly slide: THREE.Mesh;
   private readonly mag: THREE.Mesh;
   private readonly leftHand = new THREE.Group();
+  /** Held item for standing activities (newspaper or phone) in the idle left hand. */
+  private readonly item = new THREE.Group();
+  private readonly paper: THREE.Group;
+  private readonly phone: THREE.Group;
+  private activity: Activity = 'none';
+  private itemBlend = 0;
   private readonly flash: THREE.Mesh;
   private readonly casings: Casing[] = [];
   private readonly tmp = new THREE.Vector3();
@@ -152,6 +160,54 @@ export class Viewmodel {
     this.root.add(this.gun, this.leftHand);
     this.scene.add(this.root);
 
+    // Activity items: a folded newspaper and a phone, each with the holding hand.
+    const newsprint = new THREE.MeshStandardMaterial({ color: 0xd9d3c4, metalness: 0, roughness: 0.95 });
+    const ink = new THREE.MeshStandardMaterial({ color: 0x3a3733, metalness: 0, roughness: 0.95 });
+    const paperHand = new THREE.Mesh(merge([
+      box(0.02, 0.07, 0.06, -0.09, -0.07, 0.03),
+      box(0.05, 0.015, 0.02, -0.07, -0.035, -0.01),
+      box(0.012, 0.012, 0.05, -0.086, -0.04, -0.03),
+    ]), skin);
+    const paperCuff = new THREE.Mesh(merge([box(0.058, 0.058, 0.03, -0.1, -0.1, 0.07)]), cuff);
+    const paperArmGeo = box(0.068, 0.07, 0.3, 0, 0, 0.15);
+    paperArmGeo.rotateX(0.75);
+    paperArmGeo.rotateY(-0.5);
+    paperArmGeo.translate(-0.11, -0.105, 0.075);
+    const sheet = merge([box(0.3, 0.004, 0.22, 0.02, -0.03, -0.02)]);
+    sheet.rotateX(0.55);
+    const headlines = merge([
+      box(0.11, 0.0015, 0.016, -0.06, -0.0265, -0.1),
+      ...[0, 1, 2, 3, 4].map((i) => box(0.12, 0.0015, 0.004, -0.055, -0.0265, -0.07 + i * 0.016)),
+      ...[0, 1, 2, 3, 4].map((i) => box(0.11, 0.0015, 0.004, 0.09, -0.0265, -0.095 + i * 0.016)),
+      box(0.1, 0.0015, 0.05, 0.09, -0.0265, 0.03),
+    ]);
+    headlines.rotateX(0.55);
+    this.paper = new THREE.Group();
+    this.paper.add(new THREE.Mesh(sheet, newsprint), new THREE.Mesh(headlines, ink), paperHand, paperCuff, new THREE.Mesh(paperArmGeo, sleeve));
+
+    const phoneBody = new THREE.MeshStandardMaterial({ color: 0x15161a, metalness: 0.6, roughness: 0.35 });
+    const screen = new THREE.MeshBasicMaterial({ color: 0xcfe3ff });
+    const phoneHand = new THREE.Mesh(merge([
+      box(0.02, 0.07, 0.06, -0.09, -0.085, 0.03),
+      box(0.05, 0.015, 0.02, -0.07, -0.05, -0.01),
+      box(0.012, 0.045, 0.012, -0.07, -0.03, -0.015),
+    ]), skin);
+    const phoneCuff = new THREE.Mesh(merge([box(0.058, 0.058, 0.03, -0.1, -0.11, 0.07)]), cuff);
+    const phoneArmGeo = box(0.068, 0.07, 0.3, 0, 0, 0.15);
+    phoneArmGeo.rotateX(0.75);
+    phoneArmGeo.rotateY(-0.5);
+    phoneArmGeo.translate(-0.11, -0.115, 0.075);
+    const slab = merge([box(0.036, 0.075, 0.006, -0.07, -0.03, -0.012)]);
+    slab.rotateX(-0.35);
+    const glass = merge([box(0.031, 0.066, 0.001, -0.07, -0.03, -0.0155)]);
+    glass.rotateX(-0.35);
+    this.phone = new THREE.Group();
+    this.phone.add(new THREE.Mesh(slab, phoneBody), new THREE.Mesh(glass, screen), phoneHand, phoneCuff, new THREE.Mesh(phoneArmGeo, sleeve));
+
+    this.item.add(this.paper, this.phone);
+    this.item.visible = false;
+    this.scene.add(this.item);
+
     const casingGeo = new THREE.CylinderGeometry(0.0045, 0.0045, 0.019, 8).rotateZ(Math.PI / 2);
     const brass = new THREE.MeshStandardMaterial({ color: 0xc9a050, metalness: 0.9, roughness: 0.3 });
     for (let i = 0; i < 4; i++) {
@@ -178,6 +234,11 @@ export class Viewmodel {
   addLook(dx: number, dy: number): void {
     this.swayVX -= dx * 0.00012;
     this.swayVY -= dy * 0.00012;
+  }
+
+  /** Standing activity: raises the matching item into view when the gun is holstered. */
+  setActivity(a: Activity): void {
+    this.activity = a;
   }
 
   kick(): void {
@@ -245,15 +306,28 @@ export class Viewmodel {
     this.slide.position.z = Math.sin(Math.min(1, this.slideKick) * Math.PI) * 0.026;
     // Magazine swap: drop out, then a fresh one slides in.
     const rp = this.reload;
+    const RA = CONFIG.weapon.reloadAnim;
     let magDrop = 0;
-    if (rp > 0.1 && rp < 0.45) magDrop = (rp - 0.1) / 0.35;
-    else if (rp >= 0.45 && rp < 0.75) magDrop = 1 - (rp - 0.45) / 0.3;
+    if (rp > RA.dropStart && rp < RA.dropEnd) magDrop = (rp - RA.dropStart) / (RA.dropEnd - RA.dropStart);
+    else if (rp >= RA.dropEnd && rp < RA.seated) magDrop = 1 - (rp - RA.dropEnd) / (RA.seated - RA.dropEnd);
     this.mag.position.set(0, -magDrop * 0.16, magDrop * 0.04);
     this.mag.visible = magDrop < 0.95;
     // Left hand comes up to support the grip when aiming (or to swap the mag).
     const lh = Math.max(this.aim, r);
     this.leftHand.position.set(-0.02 * (1 - lh), -0.25 * (1 - lh), 0.05 * (1 - lh));
     this.leftHand.visible = lh > 0.02;
+
+    // Held item eases up from below when an activity starts (and the gun is away).
+    const wantItem = this.drawn < 0.05 && (this.activity === 'read' || this.activity === 'phone');
+    this.itemBlend += ((wantItem ? 1 : 0) - this.itemBlend) * (1 - Math.exp(-7 * dt));
+    this.item.visible = this.itemBlend > 0.02;
+    if (this.item.visible) {
+      this.paper.visible = this.activity === 'read';
+      this.phone.visible = this.activity === 'phone';
+      const breathe = Math.sin(this.time * 1.3) * 0.002;
+      this.item.position.set(0.05 + this.swayX * 0.5, -0.1 - (1 - this.itemBlend) * 0.3 + breathe + this.swayY * 0.5, -0.3);
+      this.item.rotation.set(-0.25 + this.swayY * 1.5, 0.12 + this.swayX * -1.5, 0.05);
+    }
 
     this.flash.visible = this.flashT > 0;
     for (const c of this.casings) {
