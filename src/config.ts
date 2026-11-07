@@ -146,6 +146,8 @@ export const CONFIG = {
     panicBodyRadius: 10,
     chatChance: 0.25,
     sitChance: 0.6,
+    /** A civilian who grows this suspicious of someone this close backs away from them. */
+    alarmRadius: 10,
   },
 
   perception: {
@@ -227,15 +229,45 @@ export const CONFIG = {
     doorTime: 1.4,
     /** Doors must be at least this open to board or step off. */
     boardDoors: 0.8,
-    /** Riding out: the train leaves the map this far past the trainshed end (m). */
-    offMapBeyond: 10,
-    /** A rider is off the map for at most this long (s); the train's away time is capped to fit. */
-    rideMaxOffMap: 40,
+    /**
+     * Riding out is compressed so departure → arrival back at the platform takes at
+     * most 10 s: a few seconds of the train pulling out, a fade with the ride card,
+     * then the last seconds of the next arrival.
+     */
+    rideDepartShow: 2.5,
+    rideAwaySeconds: 3.5,
+    rideArriveShow: 3,
+    /** Doorways are open for walking and for sight/shots once the doors are this open. */
+    walkDoors: 0.5,
+    /** Civilian passengers: riding (hidden) at the start, per track. */
+    startPassengers: 5,
+    /** Passengers stepping off per arrival, and civilians boarding per departure. */
+    alightMin: 3,
+    alightMax: 6,
+    boardMin: 2,
+    boardMax: 4,
+    /** Civilians this close to a door may decide to catch the train. */
+    boardRadius: 14,
   },
 
   render: {
     maxPixelRatio: 1.5,
     viewDistance: 230,
+    /** View culling: how far ahead (s) to predict the view from turning and moving. */
+    cullLookahead: 0.25,
+    /** Extra field of view (degrees) on both culling frusta. */
+    cullMarginDeg: 12,
+    /** Anything this close (m, Manhattan) is always drawn. */
+    cullNearRadius: 4,
+    /** Turn-rate cap for prediction (rad/s) and smoothing time constant (s). */
+    cullMaxTurn: 10,
+    cullSmoothing: 0.06,
+    /** Map chunk size (m) for culling. */
+    mapChunk: 16,
+    /** People farther than this (m) are drawn with the cheaper box body. */
+    crowdLodDistance: 35,
+    /** Seconds to sit down or stand up (render blend). */
+    sitBlendSeconds: 0.45,
   },
 
   quality: {

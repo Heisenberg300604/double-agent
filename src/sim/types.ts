@@ -70,7 +70,12 @@ export interface SpyState {
   deaths: number;
   civKills: number;
   targetKills: number;
+  /** Derived: the highest suspicion any single witness holds of this spy. */
   suspicion: number;
+  /** How many others can see this spy right now (kept for the player, for the HUD). */
+  watchers: number;
+  /** What this spy is visibly doing that raises suspicion (gain per second), refreshed each tick. */
+  gain: number;
   proximityTimer: number;
   /** Weapon state. */
   drawn: boolean;
@@ -99,9 +104,12 @@ export interface SpyState {
 }
 
 export interface CivState {
-  state: 'wander' | 'idle' | 'panic';
+  /** 'board': walking to a train door to catch it. */
+  state: 'wander' | 'idle' | 'panic' | 'board';
   timer: number;
   poi: number;
+  /** Track of the train being boarded ('board' state), else -1. */
+  boardTrack?: number;
 }
 
 export interface Agent {
@@ -161,6 +169,11 @@ export interface Agent {
   trainSeat: number;
   /** Riding a train off the map: invisible, untouchable, can't act. */
   away: boolean;
+  /**
+   * This agent's own suspicion of each spy (indexed by spy order), from what it
+   * has seen itself. Nothing here is shared with anyone else.
+   */
+  sus: Float32Array;
   /** Walk cycle phase (radians). */
   animPhase: number;
   alive: boolean;

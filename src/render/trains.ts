@@ -44,10 +44,15 @@ export class TrainRenderer {
     materials.envMaterials.push(this.leaves.material as THREE.MeshStandardMaterial);
   }
 
-  update(trains: readonly TrainState[], hideBeyondX: number): void {
+  /**
+   * alpha: render interpolation between the last two simulation ticks. Moving
+   * trains must be interpolated exactly like the (interpolated) camera, or a
+   * rider sees the car judder and flicker against the view.
+   */
+  update(trains: readonly TrainState[], hideBeyondX: number, alpha = 1): void {
     for (const s of trains) {
       const set = this.sets[s.track];
-      set.position.x = s.frontX;
+      set.position.x = s.prevFrontX + (s.frontX - s.prevFrontX) * alpha;
       set.visible = s.frontX < hideBeyondX;
     }
     let i = 0;
@@ -57,8 +62,9 @@ export class TrainRenderer {
       const ease = o * o * (3 - 2 * o);
       const plug = Math.min(1, ease * 4) * 0.07 * d.side;
       const visible = s.frontX < hideBeyondX;
+      const fx = s.prevFrontX + (s.frontX - s.prevFrontX) * alpha;
       for (const sgn of [-1, 1]) {
-        if (visible) this.m.makeTranslation(s.frontX + d.x + sgn * (0.31 + ease * 0.58), 0, d.z + plug);
+        if (visible) this.m.makeTranslation(fx + d.x + sgn * (0.31 + ease * 0.58), 0, d.z + plug);
         else this.m.makeScale(0, 0, 0);
         this.leaves.setMatrixAt(i, this.m);
         this.panes.setMatrixAt(i, this.m);

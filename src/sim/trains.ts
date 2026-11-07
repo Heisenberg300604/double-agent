@@ -1,12 +1,11 @@
 // Terminus train service. Deterministic per seed: each track cycles
 // away → arriving (decelerating to the buffers) → dwell (doors open) →
-// departing (accelerating out of the trainshed). Cars block sight and bullets
-// through CollisionWorld.dynamic; the track-bed guards already keep people off the rails.
+// departing (accelerating out of the trainshed). The world turns the car shells
+// into sight/bullet blockers each tick (CollisionWorld.trainRays).
 
 import { CONFIG } from '../config';
 import type { Rng } from '../core/rng';
 import type { Track } from '../world/mapData';
-import type { CollisionWorld } from '../world/collision';
 import type { SimEvent } from './types';
 
 const T = CONFIG.trains;
@@ -22,6 +21,8 @@ export interface TrainState {
   duration: number;
   /** x of the train's front (west end). */
   frontX: number;
+  /** frontX at the previous tick, for render interpolation. */
+  prevFrontX: number;
   /** 0 closed .. 1 fully open. */
   doors: number;
   /** Increments per visit, used to name services. */
@@ -53,7 +54,6 @@ export class TrainSystem {
   readonly trains: TrainState[];
   private readonly tracks: readonly Track[];
   private readonly rng: Rng;
-  private readonly boxes: CollisionWorld['dynamic'] = [];
 
   constructor(tracks: readonly Track[], rng: Rng) {
     this.tracks = tracks;
@@ -62,12 +62,15 @@ export class TrainSystem {
       // One train starts at the platform mid-dwell, the other is a little way out.
       const s: TrainState = {
         track: i, phase: i === 0 ? 'dwell' : 'away', t: 0, duration: i === 0 ? T.dwell : rng.range(18, 30),
-        frontX: tr.stopX, doors: i === 0 ? 1 : 0, service: i * 3, closingAnnounced: false, hornCooldown: 0,
+        frontX: tr.stopX, prevFrontX: tr.stopX, doors: i === 0 ? 1 : 0, service: i * 3, closingAnnounced: false, hornCooldown: 0,
       };
       if (i === 0) s.t = T.dwell * 0.35;
       return s;
     });
-    for (const s of this.trains) this.place(s);
+    for (const s of this.trains) {
+      this.place(s);
+      s.prevFrontX = s.frontX;
+    }
   }
 
   private place(s: TrainState): void {
@@ -102,6 +105,7 @@ export class TrainSystem {
 
   step(dt: number, emit: (e: SimEvent) => void): void {
     for (const s of this.trains) {
+      s.prevFrontX = s.frontX;
       s.t += dt;
       s.hornCooldown = Math.max(0, s.hornCooldown - dt);
       if (s.phase === 'dwell' && !s.closingAnnounced && s.t >= s.duration - T.doorsCloseBefore - 4) {
@@ -138,17 +142,16 @@ export class TrainSystem {
     }
   }
 
-  /** Refresh the moving ray-blocking boxes (one per car within the station). */
-  writeColliders(col: CollisionWorld, maxX: number): void {
-    this.boxes.length = 0;
-    this.trains.forEach((s) => {
-      const tr = this.tracks[s.track];
-      for (let i = 0; i < T.cars; i++) {
-        const x0 = s.frontX + carOffset(i);
-        if (x0 > maxX + 2) continue;
-        this.boxes.push({ minX: x0, maxX: x0 + T.carLength, minY: 0.3, maxY: 4.0, minZ: tr.z0 + 0.06, maxZ: tr.z1 - 0.06 });
-      }
-    });
-    col.dynamic = this.boxes;
+  /**
+   * Jump a train to a phase and time (used to compress a ride with the player aboard).
+   * The render interpolation restarts from the new position, so nothing sweeps across.
+   */
+  setPhase(track: number, phase: TrainPhase, t: number, duration: number): void {
+    const s = this.trains[track];
+    s.phase = phase;
+    s.t = t;
+    s.duration = duration;
+    this.place(s);
+    s.prevFrontX = s.frontX;
   }
 }

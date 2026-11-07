@@ -222,9 +222,11 @@ export class SpyBrain {
       }
       const isTarget = id === tgt;
       let wgt = this.belief.get(id) ?? 0;
-      if (o.spy && o.spy.suspicion >= CONFIG.suspicion.exposed) {
+      // Only this bot's own suspicion counts: what it saw itself, nobody else's.
+      const mine = o.spy ? w.suspicionOf(a, o) : 0;
+      if (mine >= CONFIG.suspicion.exposed) {
         wgt += (isTarget ? A.outlineGain : A.suspiciousGain) * dt;
-        if (!isTarget && d < 12 && o.spy.suspicion > 85) threat = threat < 0 ? id : threat;
+        if (!isTarget && d < 12 && mine > 85) threat = threat < 0 ? id : threat;
       }
       if (o.spy && o.spy.revealTimer > 0) wgt += A.suspiciousGain * dt;
       if (isTarget && d < A.observeRange && o.spy!.disguiseTimer <= 0) {

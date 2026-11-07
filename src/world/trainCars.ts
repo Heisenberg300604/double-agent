@@ -26,6 +26,8 @@ const LINING = 0.04;
 const BENCH_DEPTH = 0.5;
 const BENCH_TOP = CAR_FLOOR_Y + 0.46;
 const SEAT_PITCH = 0.78;
+/** Offset that keeps trim from sharing a plane with the surface behind it. */
+const PROUD = 0.004;
 
 export interface TrainDoor {
   /** Train-local x of the door centre. */
@@ -46,8 +48,16 @@ export interface TrainSeat {
 }
 
 export interface CarLayout {
-  /** Collision boxes (train-local x). */
+  /** Collision boxes (train-local x), without the doorways. */
   collide: Box[];
+  /** The doorways: solid only while the doors are closed. */
+  doorCollide: Box[];
+  /** Sight and bullet blockers: the shell with window holes (doorways separate). */
+  ray: Box[];
+  /** Doorway panels for rays, blocking only while the doors are closed. */
+  doorRay: Box[];
+  /** Per car: train-local AABB of the whole car (broad phase for rays). */
+  carBounds: { minX: number; maxX: number; minY: number; maxY: number; minZ: number; maxZ: number }[];
   /** Render boxes (train-local x), not including door leaves. */
   visual: Box[];
   doors: TrainDoor[];
@@ -75,7 +85,15 @@ function faceZ(dir: number): number {
 
 export function buildTrainLayout(z0: number, z1: number, railY: number): CarLayout {
   const collide: Box[] = [];
+  const doorCollide: Box[] = [];
+  const ray: Box[] = [];
+  const doorRay: Box[] = [];
+  const carBounds: CarLayout['carBounds'] = [];
   const visual: Box[] = [];
+  const mk = (x0: number, x1: number, y0: number, y1: number, za: number, zb: number): Box => ({
+    minX: Math.min(x0, x1), maxX: Math.max(x0, x1), minY: Math.min(y0, y1), maxY: Math.max(y0, y1), minZ: Math.min(za, zb), maxZ: Math.max(za, zb), mat: 'invisible', collide: true, shape: 'box',
+  });
+  const rbox = (x0: number, x1: number, y0: number, y1: number, za: number, zb: number): void => { ray.push(mk(x0, x1, y0, y1, za, zb)); };
   const doors: TrainDoor[] = [];
   const seats: TrainSeat[] = [];
   const vbox = (x0: number, x1: number, y0: number, y1: number, za: number, zb: number, mat: MatId, shape: Shape = 'box'): void => {
@@ -90,7 +108,15 @@ export function buildTrainLayout(z0: number, z1: number, railY: number): CarLayo
   for (let c = 0; c < T.cars; c++) {
     const x0 = c * (L + T.carGap), x1 = x0 + L;
     const [dA, dB] = carDoorXs(c);
+    carBounds.push({ minX: x0, maxX: x1, minY: 0.05, maxY: 4.1, minZ: a, maxZ: b });
+    // Rays: floor and underframe, roof, end walls.
+    rbox(x0, x1, 0.05, CAR_FLOOR_Y, a, b);
+    rbox(x0, x1, CAR_CEIL_Y, 4.05, a, b);
+    rbox(x0, x0 + SKIN + LINING, CAR_FLOOR_Y, CAR_CEIL_Y, a, b);
+    rbox(x1 - SKIN - LINING, x1, CAR_FLOOR_Y, CAR_CEIL_Y, a, b);
     const wins = windowXs(x0, x1);
+    /** Linings stop at the end walls instead of running flush to the car ends. */
+    const lx = (v: number): number => Math.min(x1 - SKIN, Math.max(x0 + SKIN, v));
 
     // Floor, ceiling, underframe.
     vbox(x0, x1, 0.3, CAR_FLOOR_Y, a, b, 'woodDark');
@@ -108,38 +134,51 @@ export function buildTrainLayout(z0: number, z1: number, railY: number): CarLayo
         // Below and above the windows, the full run.
         vbox(s0, s1, CAR_BODY_Y0, CAR_WIN_Y0, skin0, skin1, 'trainBody');
         vbox(s0, s1, CAR_WIN_Y1, CAR_BODY_Y1, skin0, skin1, 'trainBody');
-        vbox(s0, s1, CAR_FLOOR_Y, CAR_WIN_Y0, skin1, lin1, 'wood');
-        vbox(s0, s1, CAR_WIN_Y1, CAR_CEIL_Y, skin1, lin1, 'trainCream');
+        vbox(lx(s0), lx(s1), CAR_FLOOR_Y, CAR_WIN_Y0, skin1, lin1, 'wood');
+        vbox(lx(s0), lx(s1), CAR_WIN_Y1, CAR_CEIL_Y, skin1, lin1, 'trainCream');
         // Piers between windows.
         let px = s0;
         for (const wx of wins) {
           if (wx < s0 || wx + 1.2 > s1) continue;
           if (wx > px) {
             vbox(px, wx, CAR_WIN_Y0, CAR_WIN_Y1, skin0, skin1, 'trainBody');
-            vbox(px, wx, CAR_WIN_Y0, CAR_WIN_Y1, skin1, lin1, 'trainCream');
+            vbox(lx(px), lx(wx), CAR_WIN_Y0, CAR_WIN_Y1, skin1, lin1, 'trainCream');
           }
-          // Window frame: sill and head in rubber, flush with the skin.
-          vbox(wx - 0.03, wx + 1.23, CAR_WIN_Y0 - 0.04, CAR_WIN_Y0, zf + d * 0.01, lin1, 'rubber');
-          vbox(wx - 0.03, wx + 1.23, CAR_WIN_Y1, CAR_WIN_Y1 + 0.04, zf + d * 0.01, lin1, 'rubber');
+          // Window frame: sill and head in rubber, a few mm proud of every surface they
+          // meet (coplanar faces would z-fight and flicker).
+          vbox(wx - 0.03, wx + 1.23, CAR_WIN_Y0 - 0.04, CAR_WIN_Y0 + PROUD, zf + d * 0.01, lin1 - d * PROUD, 'rubber');
+          vbox(wx - 0.03, wx + 1.23, CAR_WIN_Y1 - PROUD, CAR_WIN_Y1 + 0.04, zf + d * 0.01, lin1 - d * PROUD, 'rubber');
           px = wx + 1.2;
         }
         if (px < s1) {
           vbox(px, s1, CAR_WIN_Y0, CAR_WIN_Y1, skin0, skin1, 'trainBody');
-          vbox(px, s1, CAR_WIN_Y0, CAR_WIN_Y1, skin1, lin1, 'trainCream');
+          vbox(lx(px), lx(s1), CAR_WIN_Y0, CAR_WIN_Y1, skin1, lin1, 'trainCream');
         }
         cbox(s0, s1, CAR_FLOOR_Y, CAR_CEIL_Y, skin0, lin1);
+        // Rays: below and above the windows, and the piers; the window holes stay open.
+        rbox(s0, s1, CAR_BODY_Y0, CAR_WIN_Y0, skin0, lin1);
+        rbox(s0, s1, CAR_WIN_Y1, CAR_BODY_Y1, skin0, lin1);
+        let rx = s0;
+        for (const wx of wins) {
+          if (wx < s0 || wx + 1.2 > s1) continue;
+          if (wx > rx) rbox(rx, wx, CAR_WIN_Y0, CAR_WIN_Y1, skin0, lin1);
+          rx = wx + 1.2;
+        }
+        if (rx < s1) rbox(rx, s1, CAR_WIN_Y0, CAR_WIN_Y1, skin0, lin1);
       }
       // Livery: cream band above the windows and a brass line.
-      vbox(x0, x1, CAR_WIN_Y1 + 0.1, CAR_WIN_Y1 + 0.26, zf + d * 0.012, zf - d * 0.01, 'trainCream');
-      vbox(x0, x1, CAR_WIN_Y0 - 0.12, CAR_WIN_Y0 - 0.09, zf + d * 0.03, zf - d * 0.01, 'brass');
+      vbox(x0 + PROUD, x1 - PROUD, CAR_WIN_Y1 + 0.1, CAR_WIN_Y1 + 0.26, zf + d * 0.012, zf - d * 0.01, 'trainCream');
+      vbox(x0 + PROUD, x1 - PROUD, CAR_WIN_Y0 - 0.12, CAR_WIN_Y0 - 0.09, zf + d * 0.03, zf - d * 0.01, 'brass');
       // Over the doors; the doorways themselves are solid for collision (the leaves),
       // so people only board and alight through the G action.
       for (const dx of [dA, dB]) {
         vbox(dx - CAR_DOOR_HALF, dx + CAR_DOOR_HALF, CAR_DOOR_TOP, CAR_BODY_Y1, skin0, skin1, 'trainBody');
         vbox(dx - CAR_DOOR_HALF, dx + CAR_DOOR_HALF, CAR_DOOR_TOP, CAR_CEIL_Y + 0.2, skin1, lin1, 'trainCream');
-        vbox(dx - CAR_DOOR_HALF - 0.08, dx - CAR_DOOR_HALF, CAR_BODY_Y0, CAR_DOOR_TOP, zf + d * 0.02, lin1, 'rubber');
-        vbox(dx + CAR_DOOR_HALF, dx + CAR_DOOR_HALF + 0.08, CAR_BODY_Y0, CAR_DOOR_TOP, zf + d * 0.02, lin1, 'rubber');
-        cbox(dx - CAR_DOOR_HALF, dx + CAR_DOOR_HALF, CAR_FLOOR_Y, CAR_CEIL_Y, skin0, lin1);
+        vbox(dx - CAR_DOOR_HALF - 0.08, dx - CAR_DOOR_HALF + PROUD, CAR_BODY_Y0 + 0.02, CAR_DOOR_TOP, zf + d * 0.02, lin1 - d * PROUD, 'rubber');
+        vbox(dx + CAR_DOOR_HALF - PROUD, dx + CAR_DOOR_HALF + 0.08, CAR_BODY_Y0 + 0.02, CAR_DOOR_TOP, zf + d * 0.02, lin1 - d * PROUD, 'rubber');
+        doorCollide.push(mk(dx - CAR_DOOR_HALF, dx + CAR_DOOR_HALF, 0, CAR_CEIL_Y, skin0, lin1));
+        rbox(dx - CAR_DOOR_HALF, dx + CAR_DOOR_HALF, CAR_DOOR_TOP, CAR_BODY_Y1, skin0, lin1);
+        doorRay.push(mk(dx - CAR_DOOR_HALF, dx + CAR_DOOR_HALF, CAR_BODY_Y0, CAR_DOOR_TOP, skin0, lin1));
         doors.push({ x: dx, z: zf, side: d as 1 | -1 });
       }
 
@@ -159,10 +198,11 @@ export function buildTrainLayout(z0: number, z1: number, railY: number): CarLayo
       for (const gx of [bx0 - 0.15, bx1 + 0.15]) vbox(gx - 0.025, gx + 0.025, CAR_FLOOR_Y, CAR_CEIL_Y, bz1 - d * 0.05, bz1 - d * 0.1, 'chrome', 'cyl');
     }
 
-    // End walls (the gangway is closed off).
+    // End walls (the gangway is closed off), set between the side skins and linings
+    // so no faces are shared.
     for (const [xe, inward] of [[x0, 1], [x1, -1]] as [number, number][]) {
-      vbox(xe, xe + inward * SKIN, CAR_BODY_Y0, CAR_BODY_Y1, a, b, 'trainBody');
-      vbox(xe + inward * SKIN, xe + inward * (SKIN + LINING), CAR_FLOOR_Y, CAR_CEIL_Y, a, b, 'wood');
+      vbox(xe, xe + inward * SKIN, CAR_BODY_Y0 + PROUD, CAR_BODY_Y1 - PROUD, a + SKIN, b - SKIN, 'trainBody');
+      vbox(xe + inward * SKIN, xe + inward * (SKIN + LINING), CAR_FLOOR_Y + PROUD, CAR_CEIL_Y - PROUD, a + SKIN + LINING, b - SKIN - LINING, 'wood');
       cbox(xe, xe + inward * (SKIN + LINING), CAR_FLOOR_Y, CAR_CEIL_Y, a, b);
     }
 
@@ -182,7 +222,7 @@ export function buildTrainLayout(z0: number, z1: number, railY: number): CarLayo
       }
     }
     // Gangway to the next car.
-    if (c < T.cars - 1) vbox(x1 - 0.05, x1 + T.carGap + 0.05, 0.6, 3.3, zc - 1.1, zc + 1.1, 'trainDark');
+    if (c < T.cars - 1) vbox(x1 - 0.02, x1 + T.carGap + 0.02, 0.6, 3.3, zc - 1.1, zc + 1.1, 'trainDark');
   }
 
   // Driving cabs at both ends (trains leave the terminus the way they came).
@@ -192,9 +232,9 @@ export function buildTrainLayout(z0: number, z1: number, railY: number): CarLayo
     vbox(out(0), out(0.18), 0.5, 3.25, a + 0.2, b - 0.2, 'trainBody');
     vbox(out(0.18), out(0.22), 2.05, 2.95, a + 0.45, b - 0.45, 'glass');
     vbox(out(0.18), out(0.22), 3.05, 3.3, a + 0.8, b - 0.8, 'led');
-    vbox(out(0.17), out(0.2), 1.72, 1.9, a + 0.2, b - 0.2, 'trainCream');
+    vbox(out(0.17), out(0.2), 1.72, 1.9, a + 0.19, b - 0.19, 'trainCream');
     vbox(out(0.18), out(0.25), 0.5, 0.75, a + 0.3, b - 0.3, 'yellow');
     for (const hz of [a + 0.55, b - 0.55]) vbox(out(0.12), out(0.28), 0.96, 1.24, hz - 0.14, hz + 0.14, 'bulb', 'sph');
   }
-  return { collide, visual, doors, seats, a, b };
+  return { collide, doorCollide, ray, doorRay, carBounds, visual, doors, seats, a, b };
 }

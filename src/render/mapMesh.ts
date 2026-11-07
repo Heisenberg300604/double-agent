@@ -4,6 +4,7 @@
 
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { CONFIG } from '../config';
 import type { Box, MapLayout, MatId } from '../world/mapData';
 import {
   LiveBoard, LiveClock, LiveLed, concreteTexture, corridorTexture, floorTexture, signAtlasTexture, signUV, wallTexture,
@@ -174,17 +175,118 @@ export function mergeBoxes(boxes: readonly Box[], mats: Record<Group, THREE.Mate
   return group;
 }
 
-export interface MapVisuals extends MapMaterials {
-  group: THREE.Group;
+/** One spatial chunk of the map: its bounds and its piece in each material group's batch. */
+export interface MapChunk {
+  bounds: THREE.Box3;
+  refs: { mesh: THREE.BatchedMesh; id: number }[];
+  visible: boolean;
 }
 
-export function buildMapMeshes(layout: MapLayout, materials: MapMaterials): MapVisuals {
-  const group = mergeBoxes(layout.boxes, materials.mats, 'map');
+export interface MapVisuals extends MapMaterials {
+  group: THREE.Group;
+  /** Empty when the map is drawn as plain merged meshes (no view culling). */
+  chunks: MapChunk[];
+}
+
+/**
+ * The static level. With `chunked` (needs WEBGL_multi_draw), boxes are grouped
+ * into ~16 m chunks and each material group becomes one BatchedMesh: still one
+ * draw call per group, but chunks outside the predicted view are skipped.
+ * Without it, each group is one plain merged mesh (as before).
+ */
+export function buildMapMeshes(layout: MapLayout, materials: MapMaterials, chunked = false): MapVisuals {
+  let group: THREE.Group;
+  const chunks: MapChunk[] = [];
+  if (!chunked) {
+    group = mergeBoxes(layout.boxes, materials.mats, 'map');
+  } else {
+    group = new THREE.Group();
+    const size = CONFIG.render.mapChunk;
+    // Assign each box to a chunk by its centre; boxes much bigger than a chunk go
+    // to one always-visible chunk (their bounds would cover everything anyway).
+    const byChunk = new Map<string, Box[]>();
+    for (const b of layout.boxes) {
+      if (b.mat === 'invisible') continue;
+      const big = b.maxX - b.minX > size * 2 || b.maxZ - b.minZ > size * 2;
+      const key = big ? 'big' : `${Math.floor((b.minX + b.maxX) / 2 / size)},${Math.floor((b.minZ + b.maxZ) / 2 / size)}`;
+      const list = byChunk.get(key) ?? [];
+      list.push(b);
+      byChunk.set(key, list);
+    }
+    // Per group: geometry per chunk.
+    const perGroup = new Map<Group, { chunk: number; geo: THREE.BufferGeometry }[]>();
+    let ci = 0;
+    for (const [key, boxes] of byChunk) {
+      const bounds = new THREE.Box3();
+      const geos = new Map<Group, THREE.BufferGeometry[]>();
+      for (const b of boxes) {
+        bounds.expandByPoint(new THREE.Vector3(b.minX, b.minY, b.minZ));
+        bounds.expandByPoint(new THREE.Vector3(b.maxX, b.maxY, b.maxZ));
+        const grp = MATS[b.mat as Exclude<MatId, 'invisible'>][0];
+        const l = geos.get(grp) ?? [];
+        l.push(geometryFor(b));
+        geos.set(grp, l);
+      }
+      if (key === 'big') bounds.set(new THREE.Vector3(-1e5, -1e5, -1e5), new THREE.Vector3(1e5, 1e5, 1e5));
+      for (const [grp, list] of geos) {
+        const merged = mergeGeometries(list, false)!;
+        for (const g of list) g.dispose();
+        const l = perGroup.get(grp) ?? [];
+        l.push({ chunk: ci, geo: merged });
+        perGroup.set(grp, l);
+      }
+      chunks.push({ bounds, refs: [], visible: true });
+      ci++;
+    }
+    for (const [grp, list] of perGroup) {
+      const verts = list.reduce((n, x) => n + x.geo.getAttribute('position').count, 0);
+      const mesh = new THREE.BatchedMesh(list.length, verts, 0, materials.mats[grp]);
+      mesh.name = `map:${grp}`;
+      mesh.userData.group = grp;
+      // We cull per chunk ourselves (with look-ahead); no per-frame sorting either.
+      mesh.perObjectFrustumCulled = false;
+      mesh.sortObjects = false;
+      mesh.frustumCulled = false;
+      for (const { chunk, geo } of list) {
+        const gid = mesh.addGeometry(geo);
+        const id = mesh.addInstance(gid);
+        chunks[chunk].refs.push({ mesh, id });
+        geo.dispose();
+      }
+      group.add(mesh);
+    }
+  }
   group.traverse((o) => {
     o.matrixAutoUpdate = false;
     o.updateMatrix();
   });
-  return { ...materials, group };
+  return { ...materials, group, chunks };
+}
+
+/** Show only the chunks the view culler says are (about to be) visible. Returns how many are shown. */
+export function cullMapChunks(chunks: MapChunk[], visible: (b: THREE.Box3) => boolean): number {
+  let n = 0;
+  for (const c of chunks) {
+    const v = visible(c.bounds);
+    if (v !== c.visible) {
+      c.visible = v;
+      for (const r of c.refs) r.mesh.setVisibleAt(r.id, v);
+    }
+    if (v) n++;
+  }
+  return n;
+}
+
+/** Can this browser draw a BatchedMesh in one call (WEBGL_multi_draw)? */
+export function supportsMultiDraw(): boolean {
+  try {
+    const gl = document.createElement('canvas').getContext('webgl2');
+    const ok = !!gl?.getExtension('WEBGL_multi_draw');
+    gl?.getExtension('WEBGL_lose_context')?.loseContext();
+    return ok;
+  } catch {
+    return false;
+  }
 }
 
 /**

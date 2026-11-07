@@ -91,6 +91,15 @@ export function civilianThink(w: World, a: Agent, dt: number): void {
         clearGoal(a);
       }
       break;
+    case 'board':
+      // Walking to a train door: the world boards us when we get there, or gives up if it leaves.
+      if (c.timer <= 0 || !a.hasGoal) {
+        c.state = 'wander';
+        c.boardTrack = -1;
+        a.maxSpeed = w.rng.range(C.minSpeed, C.maxSpeed);
+        clearGoal(a);
+      }
+      break;
   }
 }
 

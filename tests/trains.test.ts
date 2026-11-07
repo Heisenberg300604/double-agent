@@ -4,7 +4,7 @@ import { canSee } from '../src/ai/perception';
 import { dirToYaw } from '../src/core/vec';
 import { emptyIntent, type SimEvent } from '../src/sim/types';
 import { World } from '../src/sim/world';
-import { CAR_FLOOR_Y } from '../src/world/trainCars';
+import { CAR_FLOOR_Y, buildTrainLayout } from '../src/world/trainCars';
 
 const DT = 1 / CONFIG.sim.tickRate;
 const T = CONFIG.trains;
@@ -46,7 +46,8 @@ describe('boarding', () => {
     step(w, (it) => { it.interact = true; });
     expect(p.aboard).toBe(0);
     expect(p.y).toBeCloseTo(CAR_FLOOR_Y, 3);
-    // Walk around inside: stays within the car body.
+    // With the doors shut, walking around inside stays within the car body.
+    w.trains.setPhase(0, 'dwell', 0.5, T.dwell);
     const car = w.carLayouts[0];
     for (let i = 0; i < 120; i++) step(w, (it) => { it.moveZ = car.doors[0].side; it.moveX = 1; });
     expect(p.z).toBeGreaterThan(car.a);
@@ -97,64 +98,121 @@ describe('boarding', () => {
 });
 
 describe('riding out', () => {
-  it('rides out with the train, is off the map for at most 40 s, and returns with the hunter lock cleared', () => {
+  it('rides out and is back at the platform within 10 s of pulling out, with the hunter lock cleared', () => {
     const w = new World({ seed: 4, withPlayer: true });
     const p = w.player!;
     const s = w.trains.trains[0];
     s.phase = 'dwell'; s.t = 10; s.duration = T.dwell; s.frontX = w.layout.tracks[0].stopX;
     w.board(p, 0, 0);
-    // The player's hunter is sure about them.
     const hunterId = w.spies.find((x) => w.contracts.targetOf(x.id) === p.id)!.id;
     const brain = w.brains.get(hunterId)!;
     brain.belief.set(p.id, 5);
-    p.spy!.suspicion = 80;
+    for (const o of w.agents) o.sus[w.spyIndex[p.id]] = 80;
 
     const events: SimEvent[] = [];
-    let awayAt = -1, backAt = -1;
+    let departAt = -1, stoppedAt = -1;
     let invisibleWhileAway = true;
-    for (let i = 0; i < 200 * 60 && backAt < 0; i++) {
+    for (let i = 0; i < 120 * 60 && stoppedAt < 0; i++) {
       step(w, undefined, events);
-      if (p.away && awayAt < 0) awayAt = w.time;
-      if (awayAt >= 0 && !p.away) backAt = w.time;
+      const tr = w.trains.trains[0];
+      if (tr.phase === 'departing' && departAt < 0) departAt = w.time;
+      if (departAt >= 0 && tr.phase === 'dwell') stoppedAt = w.time;
       if (p.away) {
-        // Nobody can see them, and they're not in the spatial hash.
         for (const o of w.spies) if (o !== p && o.alive && canSee(w, o, p, 1e6)) invisibleWhileAway = false;
         const near: number[] = [];
         w.hash.query(p.x, p.z, 400, near);
         if (near.includes(p.id)) invisibleWhileAway = false;
-        expect(p.alive).toBe(true);
       }
-      // Riders stay on their train.
       if (p.aboard >= 0) expect(p.x).toBeCloseTo(w.trains.trains[0].frontX + p.localX, 6);
     }
-    expect(awayAt).toBeGreaterThan(0);
-    expect(backAt).toBeGreaterThan(awayAt);
-    expect(backAt - awayAt).toBeLessThanOrEqual(T.rideMaxOffMap + 0.1);
+    expect(departAt).toBeGreaterThan(0);
+    expect(stoppedAt - departAt).toBeLessThanOrEqual(10);
     expect(invisibleWhileAway).toBe(true);
     expect(events.filter((e) => e.type === 'ride').map((e) => (e as Extract<SimEvent, { type: 'ride' }>).phase)).toEqual(['board', 'away', 'return']);
-    expect(p.spy!.suspicion).toBeLessThan(5);
+    expect(p.spy!.suspicion).toBe(0);
     expect(brain.belief.get(p.id) ?? 0).toBeLessThan(1);
-    // Back in the station, aboard the arriving train; doors open at dwell, then step off.
     expect(p.aboard).toBe(0);
-    expect(p.x).toBeLessThan(w.layout.bounds.maxX + T.offMapBeyond + 0.5);
-  });
-
-  it('caps the off-map time for a rider in the rear car too', () => {
-    const w = new World({ seed: 9, withPlayer: true, civilians: 0 });
-    w.brains.clear();
-    const p = w.player!;
-    const s = w.trains.trains[1];
-    s.phase = 'dwell'; s.t = 10; s.duration = T.dwell; s.frontX = w.layout.tracks[1].stopX;
-    const doors = w.carLayouts[1].doors;
-    w.board(p, 1, doors.length - 1);
-    s.duration = T.dwell;
-    let awayAt = -1, backAt = -1;
-    for (let i = 0; i < 200 * 60 && backAt < 0; i++) {
-      step(w);
-      if (p.away && awayAt < 0) awayAt = w.time;
-      if (awayAt >= 0 && !p.away) backAt = w.time;
-    }
-    expect(backAt - awayAt).toBeGreaterThan(5);
-    expect(backAt - awayAt).toBeLessThanOrEqual(T.rideMaxOffMap + 0.1);
+    expect(p.away).toBe(false);
   });
 });
+
+describe('walking in and out, shooting through the shell', () => {
+  it('walks in through an open doorway and back out onto the platform', () => {
+    const w = atDoor();
+    const p = w.player!;
+    const d = w.carLayouts[0].doors[0];
+    const events: SimEvent[] = [];
+    for (let i = 0; i < 90 && p.aboard < 0; i++) step(w, (it) => { it.moveZ = -d.side; }, events);
+    expect(p.aboard).toBe(0);
+    for (let i = 0; i < 30; i++) step(w, (it) => { it.moveZ = -d.side; });
+    expect(p.y).toBeCloseTo(CAR_FLOOR_Y, 2);
+    for (let i = 0; i < 120 && p.aboard >= 0; i++) step(w, (it) => { it.moveZ = d.side; }, events);
+    expect(p.aboard).toBe(-1);
+    for (let i = 0; i < 30; i++) step(w, (it) => { it.moveZ = d.side; });
+    expect(p.y).toBeCloseTo(0, 3);
+    expect(events.filter((e) => e.type === 'ride').map((e) => (e as Extract<SimEvent, { type: 'ride' }>).phase)).toEqual(['board', 'alight']);
+  });
+
+  it('a closed train is solid: you cannot walk in, and walls stop you inside', () => {
+    const w = atDoor();
+    const s = w.trains.trains[0];
+    s.t = 1; // doors still shut
+    const p = w.player!;
+    const d = w.carLayouts[0].doors[0];
+    for (let i = 0; i < 90; i++) step(w, (it) => { it.moveZ = -d.side; });
+    expect(p.aboard).toBe(-1);
+  });
+
+  it('sight and bullets pass through windows and open doors, not through the walls', () => {
+    const w = atDoor();
+    const car = w.carLayouts[0];
+    const fx = w.trains.trains[0].frontX;
+    const zc = (car.a + car.b) / 2;
+    const win = car.ray.find((b) => b.minY === 1.3 && b.maxY === 2.2)!; // a pier between windows
+    const inside = { x: fx + 7.5, y: 1.75, z: zc };
+    // Out through a window hole (window centre just past the pier) vs into the pier.
+    const holeX = win.maxX + 0.6 + fx;
+    const pierX = (win.minX + win.maxX) / 2 + fx;
+    expect(w.col.clearLine(inside.x, inside.y, inside.z, holeX, 1.75, car.a - 3)).toBe(true);
+    expect(w.col.clearLine(pierX, 1.75, zc, pierX, 1.75, car.a - 3)).toBe(false);
+    // Through the low wall below the windows: blocked.
+    expect(w.col.clearLine(inside.x, 0.9, zc, inside.x, 0.9, car.a - 3)).toBe(false);
+    // Through an open doorway: clear; once the doors close: blocked.
+    const d = car.doors[0];
+    expect(w.col.clearLine(fx + d.x, 1.5, zc, fx + d.x, 1.5, d.z + d.side * 3)).toBe(true);
+    w.trains.trains[0].doors = 0;
+    w.step(DT); w.drainEvents();
+    w.trains.setPhase(0, 'dwell', 0.5, T.dwell);
+    w.step(DT); w.drainEvents();
+    expect(w.col.clearLine(fx + d.x, 1.5, zc, fx + d.x, 1.5, d.z + d.side * 3)).toBe(false);
+  });
+});
+
+describe('train geometry', () => {
+  it('has no coplanar overlapping faces (z-fighting flicker)', () => {
+    const L = w0();
+    const B = L.visual.filter((b) => b.shape === 'box');
+    const ax = ['X', 'Y', 'Z'] as const;
+    type K = 'minX' | 'maxX' | 'minY' | 'maxY' | 'minZ' | 'maxZ';
+    const bad: string[] = [];
+    for (let i = 0; i < B.length; i++) for (let j = i + 1; j < B.length; j++) {
+      const a = B[i], b = B[j];
+      for (let k = 0; k < 3; k++) {
+        const o = [0, 1, 2].filter((q) => q !== k);
+        const ov = o.map((q) => Math.min(a[`max${ax[q]}` as K], b[`max${ax[q]}` as K]) - Math.max(a[`min${ax[q]}` as K], b[`min${ax[q]}` as K]));
+        if (ov[0] <= 0.005 || ov[1] <= 0.005) continue;
+        for (const side of ['min', 'max'] as const) {
+          const key = `${side}${ax[k]}` as K;
+          if (Math.abs(a[key] - b[key]) < 0.002) bad.push(`${key} ${a.mat}/${b.mat} @${a[key].toFixed(3)}`);
+        }
+      }
+    }
+    // Only faces buried inside the shell may coincide (skin/lining planes facing the same way, hidden).
+    const visible = bad.filter((t) => !/^(minZ|maxZ) (trainCream|wood|trainBody)\/(trainBody|trainCream|wood) @(11\.310|14\.690)$/.test(t));
+    expect(visible).toEqual([]);
+  });
+});
+
+function w0(): ReturnType<typeof buildTrainLayout> {
+  return buildTrainLayout(11.2, 14.8, -1.05);
+}

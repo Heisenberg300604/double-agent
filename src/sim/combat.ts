@@ -5,7 +5,6 @@ import { CONFIG } from '../config';
 import { lookDir, v3 } from '../core/vec';
 import type { RayHit } from '../world/collision';
 import { bodyHeight, eyeHeight } from './movement';
-import { onFired } from './suspicion';
 import type { Agent } from './types';
 import type { World } from './world';
 
@@ -80,8 +79,8 @@ export function raycastAgents(w: World, ox: number, oy: number, oz: number, dx: 
 
 /** Fire the shooter's pistol along their yaw/pitch. */
 export function fireShot(w: World, shooter: Agent): void {
-  const s = shooter.spy!;
-  onFired(s);
+  // Everyone who sees the shot knows; nobody else learns anything.
+  w.witnessAct(shooter, CONFIG.suspicion.max);
   const ox = shooter.x, oy = shooter.y + eyeHeight(shooter), oz = shooter.z;
   lookDir(shooter.yaw, shooter.pitch, dir);
   const range = CONFIG.weapon.range;

@@ -4,7 +4,6 @@ import { CONFIG } from '../config';
 import { lookDir, v3 } from '../core/vec';
 import { disguisedAppearance } from './appearance';
 import { eyeHeight } from './movement';
-import { addSuspicion } from './suspicion';
 import type { Agent, Smoke } from './types';
 import type { World } from './world';
 
@@ -40,7 +39,7 @@ export function useScanner(w: World, a: Agent): boolean {
   if (!a.alive || s.cdScanner > 0) return false;
   s.cdScanner = G.scanner.cooldown;
   s.scanTimer = G.scanner.duration;
-  addSuspicion(s, G.scanner.suspicion);
+  w.witnessAct(a, G.scanner.suspicion);
   w.emit({ type: 'scanner', spy: a.id, x: a.x, y: a.y, z: a.z });
   return true;
 }

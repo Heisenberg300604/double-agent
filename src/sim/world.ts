@@ -5,8 +5,8 @@ import { CONFIG } from '../config';
 import { Rng } from '../core/rng';
 import { SpatialHash } from '../core/spatialHash';
 import type { Vec3 } from '../core/vec';
-import { buildGrandStation, type MapLayout } from '../world/mapData';
-import { CollisionWorld } from '../world/collision';
+import { buildGrandStation, type Box, type MapLayout } from '../world/mapData';
+import { CollisionWorld, type TrainRayShape } from '../world/collision';
 import { NavGraph } from '../world/navGraph';
 import { civilianAppearance, spyAppearances } from './appearance';
 import { Contracts } from './contracts';
@@ -14,15 +14,15 @@ import { fireShot } from './combat';
 import { endDisguise, segmentInSmoke, updateSmoke, useDisguise, useScanner, useSmoke } from './gadgets';
 import { bodyHeight, stepMovement } from './movement';
 import { killPoints, killRelation } from './scoring';
-import { addSuspicion, updateSuspicion } from './suspicion';
+import { stepObserved, suspicionDecay, suspicionGain } from './suspicion';
 import { emptyIntent, type Agent, type Appearance, type Noise, type SimEvent, type Smoke, type SpyIntent } from './types';
 import { canSee } from '../ai/perception';
 import { civilianThink, panic, standUp } from '../ai/civilianBrain';
 import { activityFor, findInteractable, onTrackBed, type Interactable } from './interact';
-import { followPath, clearGoal } from '../ai/steering';
+import { followPath, clearGoal, setGoal } from '../ai/steering';
 import { SpyBrain } from '../ai/spyBrain';
 import { TrainSystem, TRAIN_LENGTH, carOffset, trainSpeed } from './trains';
-import { CAR_FLOOR_Y, buildTrainLayout, type CarLayout } from '../world/trainCars';
+import { CAR_DOOR_HALF, CAR_FLOOR_Y, buildTrainLayout, type CarLayout } from '../world/trainCars';
 
 export const BOT_NAMES = ['Kestrel', 'Marlow', 'Juniper', 'Sable', 'Cobalt', 'Wren', 'Ashby', 'Fenwick', 'Linden', 'Hollis'];
 
@@ -60,9 +60,24 @@ export class World {
   playerInteractable: Interactable | null = null;
   /** Per track: the car layout (train-local), its interior collision, and seat occupancy. */
   readonly carLayouts: CarLayout[];
+  /** Interior collision with the doorways closed, and with them open (walk in and out). */
   private readonly interiorCols: CollisionWorld[];
+  private readonly interiorOpenCols: CollisionWorld[];
+  private readonly trainRayShapes: TrainRayShape[];
   private readonly interiorBounds: { minX: number; maxX: number; minZ: number; maxZ: number }[];
   readonly trainSeatOccupant: Int32Array[];
+  /** Civilians riding each train (hidden, inactive): they step off at its next arrival. */
+  readonly passengers: number[][];
+  /** Per track: this dwell's passengers have stepped off / boarders have been called. */
+  private readonly alighted: boolean[];
+  private readonly boardCalled: boolean[];
+  /** Agent id → index into Agent.sus (spy order), or -1 for civilians. */
+  readonly spyIndex: Int32Array;
+  /** Per agent: could it see the player at its last look? (for the HUD's "watched" count) */
+  private readonly seesPlayer: Uint8Array;
+  /** Per spy (spy order): decay rate of others' suspicion this tick (faster while blending). */
+  private spyDecay: Float32Array = new Float32Array(0);
+  private susLen = 0;
   time = 0;
   tick = 0;
   timeLeft: number = CONFIG.match.roundSeconds;
@@ -79,12 +94,16 @@ export class World {
     this.hash = new SpatialHash(b.minX, b.minZ, b.maxX, b.maxZ, 4);
     this.contracts = new Contracts(this.rng);
     this.trains = new TrainSystem(this.layout.tracks, new Rng((opts.seed ?? CONFIG.seed) ^ 0x7a1b));
-    this.trains.writeColliders(this.col, this.layout.bounds.maxX);
     this.carLayouts = this.layout.tracks.map((t) => buildTrainLayout(t.z0, t.z1, t.railY));
     this.interiorBounds = this.layout.tracks.map((t) => ({ minX: -1, maxX: TRAIN_LENGTH + 1, minZ: t.z0 - 1, maxZ: t.z1 + 1 }));
-    this.interiorCols = this.carLayouts.map((c, i) => new CollisionWorld({
-      bounds: this.interiorBounds[i], boxes: c.collide, ramps: [], tracks: [],
-    } as unknown as MapLayout));
+    const interior = (i: number, boxes: Box[]): CollisionWorld => new CollisionWorld({ bounds: this.interiorBounds[i], boxes, ramps: [], tracks: [] } as unknown as MapLayout);
+    this.interiorCols = this.carLayouts.map((c, i) => interior(i, [...c.collide, ...c.doorCollide]));
+    this.interiorOpenCols = this.carLayouts.map((c, i) => interior(i, c.collide));
+    this.trainRayShapes = this.carLayouts.map((c, i) => ({
+      frontX: this.trains.trains[i].frontX, doorsClosed: true, carBounds: c.carBounds, boxes: c.ray, doorBoxes: c.doorRay,
+    }));
+    this.col.trainRays = this.trainRayShapes;
+    this.syncTrainRays();
     this.trainSeatOccupant = this.carLayouts.map((c) => new Int32Array(c.seats.length).fill(-1));
     this.poiOccupant = new Int32Array(this.layout.pois.length).fill(-1);
     for (let i = 0; i < 8; i++) {
@@ -93,6 +112,7 @@ export class World {
 
     const spyCount = Math.max(CONFIG.match.minSpies, Math.min(CONFIG.match.maxSpies, opts.spies ?? CONFIG.match.spies));
     const civCount = opts.civilians ?? CONFIG.match.civilians;
+    this.susLen = spyCount;
     const looks = spyAppearances(this.rng, spyCount);
     const spawns = this.rng.shuffle([...this.layout.spawns]);
     const withPlayer = opts.withPlayer ?? true;
@@ -104,7 +124,7 @@ export class World {
       a.spy = {
         name: isPlayer ? 'You' : BOT_NAMES[(i - (withPlayer ? 1 : 0)) % BOT_NAMES.length],
         score: 0, kills: 0, deaths: 0, civKills: 0, targetKills: 0,
-        suspicion: 0, proximityTimer: 0,
+        suspicion: 0, watchers: 0, gain: 0, proximityTimer: 0,
         drawn: false, drawTimer: 0, holsterTimer: 0, aiming: false,
         ammo: CONFIG.weapon.magSize, reloadTimer: 0, fireCooldown: 0, firePending: false,
         cdScanner: 0, cdDisguise: 0, cdSmoke: 0, scanTimer: 0, disguiseTimer: 0,
@@ -126,12 +146,28 @@ export class World {
       a.y = this.col.groundHeight(a.x, a.z, n.y + 0.1);
     }
 
+    this.spyIndex = new Int32Array(this.agents.length).fill(-1);
+    this.spies.forEach((s, k) => { this.spyIndex[s.id] = k; });
+    this.seesPlayer = new Uint8Array(this.agents.length);
+    this.spyDecay = new Float32Array(this.spies.length);
     for (const s of this.spies) {
       if (!s.isPlayer) this.brains.set(s.id, new SpyBrain(this, s));
       if (this.player) s.yaw = this.rng.range(-Math.PI, Math.PI);
     }
     this.contracts.init(this.spies.map((s) => s.id));
     this.syncContracts();
+
+    // Some civilians start out riding the trains, so the first arrivals have passengers.
+    this.passengers = this.layout.tracks.map(() => []);
+    this.alighted = this.layout.tracks.map(() => true);
+    this.boardCalled = this.layout.tracks.map(() => false);
+    const civs = this.agents.filter((a) => a.civ);
+    for (let t = 0; t < this.passengers.length; t++) {
+      for (let k = 0; k < CONFIG.trains.startPassengers && civs.length > 8; k++) {
+        const c = civs.splice(this.rng.int(civs.length), 1)[0];
+        this.stowPassenger(c, t);
+      }
+    }
   }
 
   private makeAgent(kind: Agent['kind'], look: Appearance, x: number, y: number, z: number, isPlayer: boolean): Agent {
@@ -143,7 +179,7 @@ export class World {
       crouch: false, onGround: true, pose: 'stand', seatX: 0, seatY: 0, seatZ: 0,
       activity: 'none', blendTimer: 0, standLock: 0,
       mantleT: 0, mantleDur: 1, mantleFromX: 0, mantleFromY: 0, mantleFromZ: 0, mantleToX: 0, mantleToY: 0, mantleToZ: 0,
-      trackPanicTimer: 0, aboard: -1, localX: 0, trainSeat: -1, away: false,
+      trackPanicTimer: 0, aboard: -1, localX: 0, trainSeat: -1, away: false, sus: new Float32Array(this.susLen),
       animPhase: this.rng.range(0, 6.28), alive: true, health: CONFIG.health.max, deadTime: 0,
       appearance: look, baseAppearance: look,
       path: null, pathIndex: 0, goalX: 0, goalY: 0, goalZ: 0, hasGoal: false,
@@ -327,7 +363,8 @@ export class World {
     a.onGround = true;
     a.appearance = a.baseAppearance;
     a.faceYaw = NaN;
-    s.suspicion = 0;
+    this.forgetSuspicion(a);
+    a.sus.fill(0);
     s.proximityTimer = 0;
     s.ammo = CONFIG.weapon.magSize;
     s.reloadTimer = 0;
@@ -361,6 +398,8 @@ export class World {
     a.health = CONFIG.health.max;
     a.pose = 'stand';
     a.appearance = a.baseAppearance = civilianAppearance(this.rng);
+    a.sus.fill(0);
+    this.seesPlayer[a.id] = 0;
     a.faceYaw = NaN;
     a.maxSpeed = this.rng.range(CONFIG.civilian.minSpeed, CONFIG.civilian.maxSpeed);
     a.civ!.state = 'wander';
@@ -490,67 +529,144 @@ export class World {
     a.away = false;
   }
 
+  // ------------------------------------------------------------------ civilian passengers
+  /** Hide a civilian inside a train (inactive until its next arrival). */
+  private stowPassenger(c: Agent, track: number): void {
+    standUp(this, c);
+    this.releasePoi(c);
+    clearGoal(c);
+    c.away = true;
+    c.vx = c.vz = c.speed = 0;
+    c.sus.fill(0);
+    c.civ!.state = 'wander';
+    c.civ!.boardTrack = -1;
+    this.passengers[track].push(c.id);
+  }
+
   /**
-   * Keep riders' world x on their train; take them off the map once the train
-   * clears the trainshed, and bring them back (lock lost, suspicion reset) on
-   * the next arrival.
+   * Arrivals: once the doors are open, 3–6 passengers step out of random doors
+   * onto the platform. Departures: when the closing call goes out, a few nearby
+   * wandering civilians head for the doors and board if they make it in time.
    */
-  private updateRiders(): void {
+  private updatePassengers(): void {
     const T = CONFIG.trains;
-    const edge = this.layout.bounds.maxX + T.offMapBeyond;
-    for (const a of this.spies) {
-      if (a.aboard < 0) continue;
-      const s = this.trains.trains[a.aboard];
-      a.x = s.frontX + a.localX;
-      if (!a.alive) continue;
-      if (!a.away && s.phase === 'departing' && a.x > edge) {
-        a.away = true;
-        const sp = a.spy!;
-        sp.drawn = sp.aiming = false;
-        sp.firePending = false;
-        this.emit({ type: 'ride', agent: a.id, phase: 'away', track: a.aboard, service: s.service });
+    for (let t = 0; t < this.passengers.length; t++) {
+      const s = this.trains.trains[t];
+      if (s.phase !== 'dwell') {
+        this.alighted[t] = false;
+        this.boardCalled[t] = false;
+        continue;
       }
-      if (a.away && s.phase === 'away') {
-        const cap = T.rideMaxOffMap - this.rideExitTime(a.aboard, a.localX) - this.rideEnterTime(a.aboard, a.localX);
-        if (s.duration > cap) s.duration = Math.max(1, cap);
+      const doors = this.carLayouts[t].doors;
+      if (!this.alighted[t] && this.doorwaysOpen(t)) {
+        this.alighted[t] = true;
+        const n = Math.min(this.passengers[t].length, T.alightMin + this.rng.int(T.alightMax - T.alightMin + 1));
+        for (let k = 0; k < n; k++) {
+          const id = this.passengers[t].shift()!;
+          const c = this.agents[id];
+          const d = doors[this.rng.int(doors.length)];
+          c.x = c.px = s.frontX + d.x + this.rng.range(-0.3, 0.3);
+          c.z = c.pz = d.z + d.side * this.rng.range(0.7, 1.3);
+          c.y = c.py = 0;
+          c.yaw = d.side > 0 ? Math.PI : 0;
+          c.away = false;
+          c.alive = true;
+          c.pose = 'stand';
+          c.faceYaw = NaN;
+          c.civ!.state = 'wander';
+          c.civ!.timer = 0;
+        }
       }
-      if (a.away && s.phase === 'arriving' && a.x < edge) {
-        a.away = false;
-        a.spy!.suspicion = 0;
-        a.spy!.proximityTimer = 0;
-        for (const brain of this.brains.values()) brain.forget(a.id);
-        this.emit({ type: 'ride', agent: a.id, phase: 'return', track: a.aboard, service: s.service });
+      // Board: called a little before the doors close.
+      if (!this.boardCalled[t] && s.closingAnnounced) {
+        this.boardCalled[t] = true;
+        const want = T.boardMin + this.rng.int(T.boardMax - T.boardMin + 1);
+        let n = 0;
+        for (const c of this.agents) {
+          if (n >= want) break;
+          if (!c.civ || !c.alive || c.away || c.civ.state !== 'wander' || c.pose === 'sit') continue;
+          const d = doors[this.rng.int(doors.length)];
+          const dx = s.frontX + d.x, dz = d.z + d.side * 0.6;
+          if (Math.hypot(c.x - dx, c.z - dz) > T.boardRadius || Math.abs(c.y) > 0.3) continue;
+          if (!setGoal(this, c, dx, 0, dz)) continue;
+          this.releasePoi(c);
+          c.civ.state = 'board';
+          c.civ.boardTrack = t;
+          c.civ.timer = T.doorsCloseBefore + 4;
+          c.maxSpeed = CONFIG.civilian.maxSpeed;
+          n++;
+        }
+      }
+      // Anyone who reached a door while it's open gets on.
+      if (this.doorwaysOpen(t)) {
+        for (const c of this.agents) {
+          if (!c.civ || c.away || c.civ.state !== 'board' || c.civ.boardTrack !== t || !c.alive) continue;
+          for (const d of doors) {
+            if (Math.hypot(c.x - (s.frontX + d.x), c.z - (d.z + d.side * 0.6)) < 0.9) {
+              this.stowPassenger(c, t);
+              break;
+            }
+          }
+        }
       }
     }
   }
 
-  /** Fraction (0..1, in time) of the approach at which a rider at train-local x crosses the map edge. */
-  private edgeFraction(track: number, localX: number): number {
+  /** Doorways open for walking and for sight and shots. */
+  doorwaysOpen(track: number): boolean {
+    return this.trains.trains[track].doors >= CONFIG.trains.walkDoors;
+  }
+
+  /** Move the train shells to where the trains are now (sight and bullets). */
+  private syncTrainRays(): void {
+    for (let i = 0; i < this.trainRayShapes.length; i++) {
+      const s = this.trains.trains[i];
+      const r = this.trainRayShapes[i];
+      // Trains out beyond the map can't block anything here.
+      r.frontX = s.frontX > this.layout.bounds.maxX + 2 ? 1e6 : s.frontX;
+      r.doorsClosed = !this.doorwaysOpen(i);
+    }
+  }
+
+  /**
+   * Keep riders' world x on their train. A ride is compressed so it never takes
+   * more than ~10 s from pulling out to stopping at the platform again: after a
+   * short visible departure the rider fades out and the train skips to the late
+   * part of its next arrival. On the way back the rider's hunter loses them and
+   * their suspicion resets.
+   */
+  private updateRiders(): void {
     const T = CONFIG.trains;
-    const dist = this.layout.bounds.maxX + T.offMapBeyond - localX - this.layout.tracks[track].stopX;
-    return Math.sqrt(Math.max(0, Math.min(1, dist / T.approachDistance)));
+    for (const a of this.spies) {
+      if (a.aboard < 0) continue;
+      const s = this.trains.trains[a.aboard];
+      if (a.alive && a.isPlayer) {
+        if (!a.away && s.phase === 'departing' && s.t >= T.rideDepartShow) {
+          a.away = true;
+          const sp = a.spy!;
+          sp.drawn = sp.aiming = false;
+          sp.firePending = false;
+          this.emit({ type: 'ride', agent: a.id, phase: 'away', track: a.aboard, service: s.service });
+          this.trains.setPhase(a.aboard, 'away', 0, T.rideAwaySeconds);
+        } else if (a.away && s.phase === 'arriving') {
+          this.trains.setPhase(a.aboard, 'arriving', T.arriveTime - T.rideArriveShow, T.arriveTime);
+          a.away = false;
+          this.forgetSuspicion(a);
+          a.spy!.proximityTimer = 0;
+          for (const brain of this.brains.values()) brain.forget(a.id);
+          this.emit({ type: 'ride', agent: a.id, phase: 'return', track: a.aboard, service: s.service });
+        }
+      }
+      a.x = s.frontX + a.localX;
+      if (a.away) a.px = a.x;
+    }
   }
 
-  /** Departing: seconds from when the rider clears the map edge until the train is 'away'. */
-  private rideExitTime(track: number, localX: number): number {
-    return CONFIG.trains.departTime * (1 - this.edgeFraction(track, localX));
-  }
-
-  /** Arriving: seconds from the start of the approach until the rider is back inside the map edge. */
-  private rideEnterTime(track: number, localX: number): number {
-    return CONFIG.trains.arriveTime * (1 - this.edgeFraction(track, localX));
-  }
-
-  /** Seconds until an away rider is back on the map (estimate), or -1 if not away. */
+  /** Seconds until an away rider is back (the ride card's countdown), or -1 if not away. */
   rideEta(a: Agent): number {
     if (!a.away || a.aboard < 0) return -1;
     const s = this.trains.trains[a.aboard];
-    const T = CONFIG.trains;
-    const enter = this.rideEnterTime(a.aboard, a.localX);
-    if (s.phase === 'departing') return T.departTime - s.t + Math.min(T.awayMax, T.rideMaxOffMap - this.rideExitTime(a.aboard, a.localX) - enter) + enter;
-    if (s.phase === 'away') return s.duration - s.t + enter;
-    if (s.phase === 'arriving') return Math.max(0, enter - s.t);
-    return 0;
+    return s.phase === 'away' ? Math.max(0, s.duration - s.t) : 0;
   }
 
   // ------------------------------------------------------------------ tracks
@@ -605,6 +721,17 @@ export class World {
           const dx = a.x - px, dz = a.z - pz;
           const d2 = dx * dx + dz * dz;
           if (d2 >= r * r) continue;
+          // An open doorway: let the player walk in; once past the side, they're aboard.
+          if (a.isPlayer && !moving && this.doorwaysOpen(s.track) && this.inDoorway(s.track, a.x - s.frontX)) {
+            if (a.z > z0 + 0.02 && a.z < z1 - 0.02) {
+              a.aboard = s.track;
+              a.localX = a.x - s.frontX;
+              this.stopBlending(a);
+              this.emit({ type: 'ride', agent: a.id, phase: 'board', track: s.track, service: s.service });
+              break;
+            }
+            continue;
+          }
           if (moving && onTrackBed(this, a)) {
             this.killAgent(a, null, false, 'train');
             break;
@@ -622,9 +749,16 @@ export class World {
             else a.z = z1 + r + 1e-4;
           }
         }
-        if (!a.alive) break;
+        if (!a.alive || a.aboard >= 0) break;
       }
     }
+  }
+
+  /** Is train-local x inside a doorway with room for a body? */
+  private inDoorway(track: number, localX: number): boolean {
+    const room = CAR_DOOR_HALF - CONFIG.body.radius + 0.06;
+    for (const d of this.carLayouts[track].doors) if (Math.abs(localX - d.x) < room) return true;
+    return false;
   }
 
   /** Horn at people on the bed ahead of a moving train; nearby civilians panic. */
@@ -826,8 +960,9 @@ export class World {
 
     // Trains move first so sight lines and shots see the current cars.
     this.trains.step(dt, (e) => this.emit(e));
-    this.trains.writeColliders(this.col, this.layout.bounds.maxX);
     this.updateRiders();
+    this.updatePassengers();
+    this.syncTrainRays();
 
     // Spatial hash.
     this.hash.clear();
@@ -838,8 +973,9 @@ export class World {
     for (let i = 0; i < this.agents.length; i++) {
       if ((i + this.tick) % AI_DIVISOR !== 0) continue;
       const a = this.agents[i];
-      if (a.civ) civilianThink(this, a, thinkDt);
-      else if (!a.isPlayer) this.brains.get(a.id)?.think(thinkDt);
+      if (a.civ) {
+        if (!a.away) civilianThink(this, a, thinkDt);
+      } else if (!a.isPlayer) this.brains.get(a.id)?.think(thinkDt);
     }
     for (const brain of this.brains.values()) brain.act(dt);
 
@@ -866,19 +1002,30 @@ export class World {
 
     // Movement.
     for (const a of this.agents) {
+      if (a.away && !a.isPlayer) continue; // passengers riding a train
       let jumped: boolean;
       if (a.aboard >= 0) {
         // Inside a train: move in train-local space against the car interior.
         const frontX = this.trains.trains[a.aboard].frontX;
         a.x = a.localX;
-        jumped = stepMovement(a, this.interiorCols[a.aboard], dt, this.interiorBounds[a.aboard]);
+        const open = this.doorwaysOpen(a.aboard);
+        jumped = stepMovement(a, (open ? this.interiorOpenCols : this.interiorCols)[a.aboard], dt, this.interiorBounds[a.aboard]);
         a.localX = a.x;
         a.x = frontX + a.localX;
+        // Walked out through an open doorway onto the platform.
+        const car = this.carLayouts[a.aboard];
+        if (open && a.pose !== 'sit' && (a.z < car.a - 0.02 || a.z > car.b + 0.02)) {
+          const track = a.aboard;
+          a.aboard = -1;
+          a.y = Math.max(a.y, 0);
+          a.px = a.x;
+          this.emit({ type: 'ride', agent: a.id, phase: 'alight', track, service: this.trains.trains[track].service });
+        }
       } else {
         jumped = stepMovement(a, this.col, dt, this.layout.bounds);
       }
       if (jumped && a.spy) {
-        addSuspicion(a.spy, CONFIG.suspicion.jump);
+        this.witnessAct(a, CONFIG.suspicion.jump);
         this.emit({ type: 'jump', agent: a.id });
       }
     }
@@ -891,17 +1038,30 @@ export class World {
       if (a.alive && this.isBlending(a)) a.blendTimer += dt;
     }
 
-    // Suspicion.
-    for (const s of this.spies) {
-      if (!s.alive || s.away) continue;
+    // Suspicion is per observer: work out what each spy is visibly doing, then let
+    // each agent (staggered, at its own 10 Hz look) judge only what it can see.
+    this.spies.forEach((s, k) => {
       const sp = s.spy!;
-      updateSuspicion(sp, {
-        running: sp.running, drawn: sp.drawn, aiming: sp.aiming, nearSpy: this.nearOtherSpy(s),
-        cover: sp.running && this.inPanickingCrowd(s),
-        blend: this.blendBonus(s),
-        onTracks: onTrackBed(this, s),
-      }, dt);
+      if (!s.alive || s.away) {
+        sp.gain = 0;
+        sp.proximityTimer = 0;
+        this.spyDecay[k] = CONFIG.suspicion.decay;
+        return;
+      }
+      sp.proximityTimer = this.nearOtherSpy(s) ? sp.proximityTimer + dt : 0;
+      const blend = this.blendBonus(s);
+      sp.gain = suspicionGain({
+        running: sp.running, drawn: sp.drawn, aiming: sp.aiming, nearSpy: false,
+        cover: sp.running && this.inPanickingCrowd(s), blend, onTracks: onTrackBed(this, s),
+      }, sp.proximityTimer > CONFIG.suspicion.proximityDelay);
+      this.spyDecay[k] = suspicionDecay(blend);
+    });
+    for (let i = 0; i < this.agents.length; i++) {
+      if ((i + this.tick) % AI_DIVISOR !== 0) continue;
+      const o = this.agents[i];
+      if (o.alive && !o.away) this.observeSpies(o, thinkDt);
     }
+    this.updateDerivedSuspicion();
 
     // Smoke.
     for (const sm of this.smokes) if (sm.active) updateSmoke(this, sm, dt);
@@ -969,6 +1129,83 @@ export class World {
       p.z += (dz / d) * (R - d);
     }
     this.col.resolveCircle(p, CONFIG.body.radius, bodyHeight(p), true);
+  }
+
+  // ------------------------------------------------------------------ suspicion (per observer)
+  /** One agent's look around: its own suspicion of each spy rises only while it sees them acting suspiciously. */
+  private observeSpies(obs: Agent, dt: number): void {
+    const exposed = CONFIG.suspicion.exposed;
+    for (let k = 0; k < this.spies.length; k++) {
+      const s = this.spies[k];
+      if (s === obs) continue;
+      let v = obs.sus[k];
+      if (!s.alive || s.away) {
+        obs.sus[k] = Math.max(0, v - CONFIG.suspicion.decay * dt);
+        if (s.isPlayer) this.seesPlayer[obs.id] = 0;
+        continue;
+      }
+      const gain = s.spy!.gain;
+      // Only look (cone + raycast) when it matters: something suspicious to see,
+      // or the player (so the HUD can show who is watching).
+      const look = gain > 0 || (s.isPlayer && !obs.isPlayer);
+      const seen = look && canSee(this, obs, s);
+      v = stepObserved(v, gain, this.spyDecay[k], seen, dt);
+      obs.sus[k] = v;
+      if (s.isPlayer) this.seesPlayer[obs.id] = seen ? 1 : 0;
+      // Civilians act on their own suspicion: back away from someone alarming nearby.
+      if (obs.civ && seen && v >= exposed && obs.civ.state !== 'panic' && Math.hypot(s.x - obs.x, s.z - obs.z) < CONFIG.civilian.alarmRadius) {
+        panic(this, obs, s.x, s.z);
+      }
+    }
+  }
+
+  /**
+   * A one-off suspicious act (a shot, a jump, a scanner pulse): only agents who can
+   * see the spy at this moment add `amount` to their own suspicion of them.
+   */
+  witnessAct(spy: Agent, amount: number): void {
+    const k = this.spyIndex[spy.id];
+    if (k < 0) return;
+    const max = CONFIG.suspicion.max;
+    for (const o of this.agents) {
+      if (o === spy || !o.alive || o.away) continue;
+      if (!canSee(this, o, spy)) continue;
+      o.sus[k] = Math.min(max, o.sus[k] + amount);
+    }
+    this.updateDerivedSuspicion();
+  }
+
+  /** Everyone forgets what they thought of this spy (respawn, return from a ride). */
+  private forgetSuspicion(spy: Agent): void {
+    const k = this.spyIndex[spy.id];
+    if (k < 0) return;
+    for (const o of this.agents) o.sus[k] = 0;
+    spy.spy!.suspicion = 0;
+  }
+
+  /** spy.suspicion = the most suspicious single witness; the player's watcher count for the HUD. */
+  private updateDerivedSuspicion(): void {
+    for (let k = 0; k < this.spies.length; k++) {
+      const s = this.spies[k];
+      let m = 0;
+      for (const o of this.agents) {
+        if (o === s || !o.alive) continue;
+        const v = o.sus[k];
+        if (v > m) m = v;
+      }
+      s.spy!.suspicion = m;
+    }
+    if (this.player) {
+      let n = 0;
+      for (const o of this.agents) if (o !== this.player && o.alive && this.seesPlayer[o.id]) n++;
+      this.player.spy!.watchers = this.player.alive && !this.player.away ? n : 0;
+    }
+  }
+
+  /** What `observer` itself thinks of `spy` (0..100). */
+  suspicionOf(observer: Agent, spy: Agent): number {
+    const k = this.spyIndex[spy.id];
+    return k < 0 ? 0 : observer.sus[k];
   }
 
   /** Which blending bonus applies to this agent right now, if any. */

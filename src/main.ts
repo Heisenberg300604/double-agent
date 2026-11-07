@@ -14,6 +14,7 @@ import { eyeHeight } from './sim/movement';
 import { ordinal, rankOf } from './sim/scoring';
 import { emptyIntent, type Agent, type SimEvent } from './sim/types';
 import { World } from './sim/world';
+import { setupPractice } from './sim/practice';
 import { Hud, type HudState, type ScoreRow } from './ui/hud';
 import { Menus } from './ui/menus';
 import { loadSettings, saveSettings, type Settings } from './ui/settings';
@@ -51,8 +52,9 @@ class Game {
   private attractT = 0;
   private readonly cam: CameraPose = { x: 0, y: 0, z: 0, yaw: 0, pitch: 0, roll: 0 };
   private seed = 0;
-  /** One-time contextual tips for new players. */
+  /** One-time contextual tips for new players (first match only). */
   private hints = new Set<string>();
+  private tipsOn = false;
   private matchTime = 0;
   private remoteStepTimer = 0;
   /** Station life: announcements, door cycles (pause-aware timers). */
@@ -80,23 +82,30 @@ class Game {
     this.menus = new Menus(this.settings, {
       play: () => {
         this.audio.start();
-        if (!this.settings.seenHowTo) this.menus.briefing();
-        else this.startMatch();
+        // First run: the illustrated briefing, then a match with contextual tips.
+        if (!this.settings.tutorialDone) this.menus.briefing();
+        else this.startMatch(false);
       },
-      howtoDone: () => {
-        this.settings.seenHowTo = true;
+      practice: () => {
+        this.audio.start();
+        this.startMatch(true, true);
+      },
+      briefingDone: () => {
+        this.settings.tutorialDone = true;
         saveSettings(this.settings);
-        this.startMatch();
+        this.startMatch(true);
       },
+      howtoDone: () => this.startMatch(false),
       resume: () => this.resume(),
       quit: () => this.toTitle(),
-      again: () => this.startMatch(),
+      again: () => this.startMatch(false),
       settingsChanged: (s) => {
         this.settings = s;
         saveSettings(s);
         this.renderer.baseFov = s.fov;
         this.audio.setVolume(s.volume);
         if (s.quality !== this.renderer.setting) this.renderer.setQuality(s.quality);
+        this.syncTitleStill();
       },
     });
 
@@ -119,6 +128,7 @@ class Game {
     document.getElementById('loading')!.remove();
     console.info(`[double-agent] ready in ${Math.round(performance.now())} ms`);
     this.menus.show('title');
+    this.syncTitleStill();
     // Recorded sounds download only after the title screen is up (procedural until then).
     window.setTimeout(() => this.audio.preloadSamples(), 300);
     requestAnimationFrame((t) => this.frame(t));
@@ -131,12 +141,33 @@ class Game {
     const spies = Number(params.get('spies')) || CONFIG.match.spies;
     const w = new World({ seed: this.seed, withPlayer, spies });
     if (withPlayer) console.info(`[double-agent] match seed ${this.seed} (add ?seed=${this.seed} to replay)`);
+    else {
+      // Title-screen backdrop: the station goes about its day; nobody acts like a spy.
+      w.brains.clear();
+      for (const s of w.spies) s.civ = { state: 'wander', timer: 0, poi: -1 };
+    }
     return w;
   }
 
+  /** Title backdrop on Low quality: a still image instead of the live station. */
+  private get titleStill(): boolean {
+    return this.settings.quality === 'low';
+  }
+
+  private syncTitleStill(): void {
+    const img = document.getElementById('title-still') as HTMLImageElement;
+    const on = this.titleStill;
+    if (on && !img.getAttribute('src')) img.src = 'img/title.webp';
+    img.classList.toggle('hidden', !on);
+  }
+
   // ---------------------------------------------------------------- state changes
-  private startMatch(): void {
+  private startMatch(tips: boolean, practice = false): void {
+    this.tipsOn = tips;
+    this.practice = practice;
+    this.hints.clear();
     this.world = this.makeWorld(true);
+    if (practice) setupPractice(this.world);
     const p = this.world.player!;
     this.yaw = p.yaw;
     this.pitch = 0;
@@ -149,7 +180,7 @@ class Game {
     this.state = 'playing';
     this.input.clearPresses();
     this.input.requestLock();
-    this.hud.centerMessage('Find your target. Blend in.', false, 3);
+    this.hud.centerMessage(practice ? 'Practice: nobody is hunting you. Find your target.' : 'Find your target. Blend in.', false, 3);
     this.matchTime = 0;
     this.lastTime = performance.now();
   }
@@ -224,7 +255,7 @@ class Game {
         if (this.world.over) break;
       }
       if (this.world.over && this.state === 'playing') this.endRound();
-    } else if (this.state === 'title') {
+    } else if (this.state === 'title' && !this.titleStill) {
       const steps = this.loop.advance(dt);
       for (let i = 0; i < steps; i++) this.world.step(this.loop.dt);
       this.world.drainEvents();
@@ -284,7 +315,19 @@ class Game {
     return { dest: dests[(service * 3 + track * 5) % dests.length], from: dests[(service * 7 + track * 2 + 4) % dests.length] };
   }
 
+  /** Spent brass from the player's pistol: out of the ejection port to the right, onto the floor. */
+  private ejectCasing(me: Agent): void {
+    const cy = Math.cos(this.yaw), sy = Math.sin(this.yaw), cp = Math.cos(this.pitch), spch = Math.sin(this.pitch);
+    const fx = -sy * cp, fy = spch, fz = -cy * cp;
+    const rx = cy, rz = -sy;
+    const x = this.cam.x + fx * 0.3 + rx * 0.1, y = this.cam.y + fy * 0.3 - 0.08, z = this.cam.z + fz * 0.3 + rz * 0.1;
+    const side = 1.4 + Math.random() * 0.6, up = 1.2 + Math.random() * 0.6;
+    this.renderer.effects.casing(x, y, z, rx * side + me.vx + fx * 0.3, up, rz * side + me.vz + fz * 0.3, me.y);
+  }
+
   private rideTitle = '';
+  /** Practice session: no hunters; it ends after the first target kill. */
+  private practice = false;
   private wasDrawn = false;
 
   private onRide(e: Extract<SimEvent, { type: 'ride' }>): void {
@@ -390,6 +433,7 @@ class Game {
           this.audio.shot(own ? undefined : { x: sh.x, y: sh.y + 1.5, z: sh.z }, own);
           if (own) {
             this.renderer.viewmodel.kick();
+            this.ejectCasing(me);
             this.hud.crosshairKick();
             this.pitch = Math.min(1.45, this.pitch + 0.012);
             if (e.hitAgent >= 0) {
@@ -493,6 +537,12 @@ class Game {
     }
     const pts = (n: number): string => (n >= 0 ? `+${n}` : `−${-n}`);
     if (e.killer === me.id) {
+      if (this.practice && e.relation === 'target') {
+        this.hud.centerMessage('Practice complete — target eliminated', false, 3.5);
+        this.audio.killSting(true);
+        this.later(3.5, () => { if (this.practice && this.state === 'playing') this.toTitle(); });
+        return;
+      }
       switch (e.relation) {
         case 'target': {
           const extra = [e.headshot ? 'headshot' : '', e.unseen ? 'unseen' : ''].filter(Boolean).join(', ');
@@ -532,6 +582,11 @@ class Game {
 
   // ---------------------------------------------------------------- render
   private renderFrame(dt: number): void {
+    // Low quality title: the still image stands in for the live station (no 3D work at all).
+    if (this.state === 'title' && this.titleStill) {
+      this.audio.update(dt);
+      return;
+    }
     const w = this.world;
     const alpha = this.loop.alpha;
     const me = w.player;
@@ -541,7 +596,8 @@ class Game {
     if (me && this.state !== 'title') {
       const tgtId = w.contracts.targetOf(me.id);
       const tgt = tgtId >= 0 ? w.agents[tgtId] : null;
-      if (tgt && tgt.alive && tgt.spy!.suspicion >= CONFIG.suspicion.exposed) outlined.push(tgt.id);
+      // You see your target outlined only if you yourself saw them act suspiciously.
+      if (tgt && tgt.alive && w.suspicionOf(me, tgt) >= CONFIG.suspicion.exposed) outlined.push(tgt.id);
       for (const s of w.spies) if (s !== me && s.alive && s.spy!.revealTimer > 0) revealed.push(s);
 
       // Camera.
@@ -566,15 +622,9 @@ class Game {
       this.updateHud(dt, tgt);
       if (this.state === 'playing') this.updateHints(dt, tgt);
     } else {
-      // Attract mode: slow pan across the concourse from the balcony.
+      // Title backdrop: a slow, seeded camera drift through the concourse.
       this.attractT += dt;
-      const a = this.attractT * 0.05;
-      this.cam.x = -10 + Math.sin(a) * 11;
-      this.cam.y = 10.5;
-      this.cam.z = 14;
-      this.cam.yaw = Math.sin(a * 0.7) * 0.45;
-      this.cam.pitch = -0.42;
-      this.cam.roll = 0;
+      titleCamera(this.attractT + (this.seed % 997), this.cam);
     }
 
     const sp = me?.spy;
@@ -605,6 +655,7 @@ class Game {
       this.hud.setDebug(
         `FPS ${(1000 / this.frameMs).toFixed(0)} (avg ${r.scaler.averageFps().toFixed(0)})  frame ${this.frameMs.toFixed(2)} ms  sim ${this.simMs.toFixed(2)} ms  render ${this.renderMs.toFixed(2)} ms\n` +
         `draw calls ${r.drawCalls}  tris ${(r.triangles / 1000).toFixed(1)}k  scale ${r.renderScale.toFixed(2)}  quality ${r.setting}/${r.level}\n` +
+        `culling: people ${r.agentsDrawn}/${w.agents.length}  map chunks ${r.map.chunks.length ? `${r.chunksDrawn}/${r.map.chunks.length}` : 'off (no multi-draw)'}  turn ${r.cull.yawVel.toFixed(1)} rad/s\n` +
         `agents ${w.agents.length}  spies ${w.spies.length}  seed ${this.seed}\n` +
         `sim ${this.measuredTps.toFixed(1)} ticks/s (target ${CONFIG.sim.tickRate})  player ${this.measuredSpeed.toFixed(2)} m/s (walk ${CONFIG.movement.walkSpeed}, run ${CONFIG.movement.runSpeed})`,
       );
@@ -625,7 +676,8 @@ class Game {
   }
 
   private hint(key: string, text: string): void {
-    if (this.hints.has(key)) return;
+    // Contextual tips are part of the first-match tutorial only.
+    if (!this.tipsOn || this.hints.has(key)) return;
     this.hints.add(key);
     this.hud.toast(text);
   }
@@ -635,10 +687,13 @@ class Game {
     const s = me.spy!;
     this.matchTime += dt;
     if (!me.alive) return;
-    if (this.matchTime > 5 && s.cdScanner === 0 && s.scanTimer === 0) this.hint('scan', 'Press Q to scan — the arrow points to your target.');
+    if (this.matchTime > 1.5) this.hint('dossier', "Check your dossier (top right). That's who you're hunting.");
+    if (s.suspicion > 40) this.hint('susp40', "You're drawing attention. Slow down, or get out of sight.");
+    if (this.matchTime > 14 && s.cdScanner === 0 && s.scanTimer === 0) this.hint('scan', 'Press Q to scan — the arrow points to your target.');
     if (s.scanTimer > 0) this.hint('scanned', 'Match the dossier (top right) against people in that direction.');
-    if (s.suspicion >= CONFIG.suspicion.exposed) this.hint('exposed', 'You are EXPOSED: your hunter sees you outlined in red. Walk calmly to cool off.');
-    if (tgt && tgt.alive && tgt.spy!.suspicion >= CONFIG.suspicion.exposed) this.hint('outline', 'Your target is exposed — the red outline gives them away.');
+    if (s.suspicion >= CONFIG.suspicion.exposed) this.hint('exposed', 'Someone saw too much: anyone who watched you is now suspicious, and a hunter who saw it sees you outlined in red. Walk calmly, out of sight, to cool off.');
+    if (s.drawn && s.watchers === 0) this.hint('unseen', 'Nobody can see you, so drawing raises no suspicion. Each person only judges what they see.');
+    if (tgt && tgt.alive && this.world.suspicionOf(me, tgt) >= CONFIG.suspicion.exposed) this.hint('outline', 'You saw your target act suspiciously — the red outline gives them away.');
     if (this.matchTime > 40 && s.cdDisguise === 0) this.hint('gadgets', 'Feel watched? E changes your suit, F throws smoke that blocks sight.');
     const t = this.world.playerInteractable;
     if (t && t.kind === 'sit') this.hint('sit', 'Press G to sit. Seated agents look harmless and cool off faster.');
@@ -686,6 +741,7 @@ class Game {
       score: s.score,
       rank: `${ordinal(rank)} / ${w.spies.length}`,
       suspicion: s.suspicion,
+      watchers: me.alive ? s.watchers : 0,
       health: me.health,
       ammo: s.ammo,
       reloading: s.reloadTimer > 0,
@@ -712,6 +768,36 @@ class Game {
     const showBoard = this.input.isDown('Tab') && this.state === 'playing';
     this.hud.setScoreboard(showBoard, showBoard ? w.spyRanking().map((a) => this.scoreRow(a)) : []);
   }
+}
+
+/** Waypoints of the title-screen camera loop (checked clear of pillars and the clock). */
+const TITLE_PATH: [number, number, number][] = [[-34, 3.2, 4], [-18, 2.6, 6.5], [-2, 3.0, 6.5], [12, 3.4, 3.5], [12, 2.8, -5], [-4, 3.2, -6.5], [-20, 2.6, -6.5], [-34, 3.0, -3]];
+
+function catmull(p0: number, p1: number, p2: number, p3: number, t: number): number {
+  return 0.5 * (2 * p1 + (-p0 + p2) * t + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t * t + (-p0 + 3 * p1 - 3 * p2 + p3) * t * t * t);
+}
+
+function titlePoint(u: number, out: number[]): void {
+  const n = TITLE_PATH.length;
+  const f = ((u % n) + n) % n;
+  const i = Math.floor(f), t = f - i;
+  for (let c = 0; c < 3; c++) {
+    out[c] = catmull(TITLE_PATH[(i - 1 + n) % n][c], TITLE_PATH[i][c], TITLE_PATH[(i + 1) % n][c], TITLE_PATH[(i + 2) % n][c], t);
+  }
+}
+
+const tp = [0, 0, 0], tq = [0, 0, 0];
+/** Camera pose along the title loop at time t (s): ~1 m/s, looking ahead and slightly inward. */
+function titleCamera(t: number, cam: CameraPose): void {
+  const u = t / 14;
+  titlePoint(u, tp);
+  titlePoint(u + 0.35, tq);
+  cam.x = tp[0];
+  cam.y = tp[1];
+  cam.z = tp[2];
+  cam.yaw = dirToYaw(tq[0] - tp[0], tq[2] - tp[2]) + 0.35 * Math.sin(t * 0.07);
+  cam.pitch = -0.12 + 0.04 * Math.sin(t * 0.05);
+  cam.roll = 0;
 }
 
 inject();

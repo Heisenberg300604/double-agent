@@ -6,7 +6,16 @@
     <title>Double Agent</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22%3E%3Crect width=%2232%22 height=%2232%22 rx=%226%22 fill=%22%230d0c0f%22/%3E%3Cpath d=%22M6 13h20l-3-6H9z%22 fill=%22%23c9a25a%22/%3E%3Crect x=%224%22 y=%2213%22 width=%2224%22 height=%222%22 fill=%22%23c9a25a%22/%3E%3Ccircle cx=%2211%22 cy=%2221%22 r=%223.5%22 fill=%22none%22 stroke=%22%23ff3b3b%22 stroke-width=%222%22/%3E%3Ccircle cx=%2221%22 cy=%2221%22 r=%223.5%22 fill=%22none%22 stroke=%22%23ff3b3b%22 stroke-width=%222%22/%3E%3C/svg%3E" />
     <meta name="description" content="A first-person spy shooter. Find your target in the crowd. Blend in. Don't get found." />
+    <link rel="preload" href="/fonts/playfair-display-latin.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="/fonts/inter-latin.woff2" as="font" type="font/woff2" crossorigin />
     <style>
+      /* Self-hosted fonts (SIL OFL; licences in /fonts/OFL-*.txt). Latin subsets, variable weights. */
+      @font-face { font-family: 'Playfair Display'; src: url(/fonts/playfair-display-latin.woff2) format('woff2'); font-weight: 400 900; font-display: swap; unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+      @font-face { font-family: 'Inter'; src: url(/fonts/inter-latin.woff2) format('woff2'); font-weight: 100 900; font-display: swap; unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+      @font-face { font-family: 'JetBrains Mono'; src: url(/fonts/jetbrains-mono-latin.woff2) format('woff2'); font-weight: 100 800; font-display: swap; unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+      /* Metric-matched fallbacks keep text from jumping when the web fonts swap in. */
+      @font-face { font-family: 'Playfair Fallback'; src: local('Georgia'); size-adjust: 112%; ascent-override: 90%; descent-override: 22%; }
+      @font-face { font-family: 'Inter Fallback'; src: local('Arial'); size-adjust: 107%; ascent-override: 90%; descent-override: 22%; }
       :root {
         --bg: #0d0c0f;
         --panel: rgba(16, 15, 18, 0.82);
@@ -17,9 +26,10 @@
         --muted: #9a9387;
         --red: #ff3b3b;
         --ok: #8fcf9b;
-        --serif: Georgia, 'Times New Roman', serif;
-        --mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
-        --sans: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+        --serif: 'Playfair Display', 'Playfair Fallback', Georgia, 'Times New Roman', serif;
+        --mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+        --sans: 'Inter', 'Inter Fallback', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+        --amber: #f0b44c;
       }
       * { box-sizing: border-box; }
       html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font-family: var(--sans); overflow: hidden; user-select: none; }
@@ -156,12 +166,69 @@
       .stats b { display: block; font: 700 22px var(--mono); }
       .stats span { font-size: 11px; color: var(--muted); letter-spacing: 1px; text-transform: uppercase; }
       .result { text-align: center; color: var(--brass); letter-spacing: 3px; font-size: 13px; text-transform: uppercase; margin-bottom: 4px; }
+      /* ------------------------------------------------ landing */
+      #menu-title.screen { place-items: stretch; padding: 0; background: linear-gradient(90deg, rgba(13,12,15,0.92) 0%, rgba(13,12,15,0.7) 38%, rgba(13,12,15,0.35) 62%, rgba(13,12,15,0.78) 100%); }
+      #title-still { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0.5; }
+      .landing { position: relative; display: grid; grid-template-columns: minmax(300px, 0.9fr) minmax(0, 1.4fr); gap: clamp(20px, 4vw, 56px); align-items: center; padding: clamp(20px, 5vw, 64px); min-height: 100%; }
+      .brand { text-align: left; }
+      .board-line { display: inline-flex; gap: 10px; align-items: center; font: 500 12px var(--mono); letter-spacing: 2px; color: var(--amber); background: #0a090b; border: 1px solid #2a2620; border-radius: 3px; padding: 6px 10px; text-transform: uppercase; }
+      .board-line i { width: 6px; height: 6px; border-radius: 50%; background: var(--amber); box-shadow: 0 0 8px var(--amber); font-style: normal; }
+      .brand h1 { font: 600 clamp(44px, 6.4vw, 92px)/0.95 var(--serif); letter-spacing: 0.16em; margin: 22px 0 0; color: var(--text); }
+      .brand h1 span { display: block; color: var(--brass); }
+      .brand .rule { width: 140px; height: 1px; background: linear-gradient(90deg, var(--brass), transparent); margin: 20px 0 14px; }
+      .brand .tag { color: var(--muted); letter-spacing: 2.5px; font: 500 13px var(--sans); text-transform: uppercase; margin: 0 0 28px; }
+      .brand .btns { align-items: flex-start; }
+      .touch-note { margin-top: 16px; font-size: 13px; color: var(--muted); max-width: 340px; line-height: 1.5; }
+      .explainer h2 { font: 600 13px var(--sans); letter-spacing: 3px; text-transform: uppercase; color: var(--brass); margin: 0 0 12px; }
+      .cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+      .xcard { background: rgba(16,15,18,0.86); border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px 12px; }
+      .xcard svg { display: block; width: 100%; height: auto; aspect-ratio: 240 / 120; max-height: 118px; margin-bottom: 6px; }
+      .xcard .red { color: var(--red); font-weight: 600; }
+      .xcard b { color: var(--brass); }
+      .xcard h3 { font: 600 17px var(--serif); margin: 0 0 4px; color: var(--text); }
+      .xcard p { margin: 0; font-size: 13px; line-height: 1.4; color: #cfc8bb; }
+      .scoreboard-board { margin-top: 10px; background: #0a090b; border: 1px solid #2a2620; border-radius: 4px; padding: 6px 12px; font: 500 11px var(--mono); color: var(--amber); display: grid; grid-template-columns: 1fr 1fr; column-gap: 24px; }
+      .scoreboard-board .row { display: grid; grid-template-columns: 1fr auto; gap: 8px; padding: 3px 0; border-bottom: 1px dashed rgba(240,180,76,0.15); letter-spacing: 1px; text-transform: uppercase; }
+      .scoreboard-board .head { grid-column: 1 / -1; }
+      @media (max-width: 560px) { .scoreboard-board { grid-template-columns: 1fr; } }
+      .scoreboard-board .neg { color: #ff6b5b; }
+      .scoreboard-board .head { color: var(--muted); font-size: 10px; letter-spacing: 2px; }
+      /* Briefing stepper (first run) and How to Play reuse the explainer cards. */
+      .brief { width: min(560px, 100%); }
+      .brief .xcard { padding: 18px 20px 20px; }
+      .brief .xcard h3 { font-size: 24px; }
+      .brief .xcard p { font-size: 15px; }
+      .brief .xcard svg { max-height: 240px; }
+      .brief .dots { display: flex; gap: 6px; justify-content: center; margin: 14px 0; }
+      .brief .dots i { width: 8px; height: 8px; border-radius: 50%; background: rgba(201,162,90,0.25); }
+      .brief .dots i.on { background: var(--brass); }
+      .brief .btns { flex-direction: row; justify-content: center; }
+      .brief .btns button { min-width: 140px; }
+      .howto .cards { margin-bottom: 16px; }
+      .howto { width: min(820px, 100%) !important; }
+      @media (max-width: 900px) {
+        .landing { grid-template-columns: 1fr; }
+        .brand { text-align: center; }
+        .brand .rule { margin: 20px auto 14px; background: linear-gradient(90deg, transparent, var(--brass), transparent); }
+        .brand .btns { align-items: center; }
+        .touch-note { margin: 16px auto 0; }
+      }
+      @media (max-width: 560px) {
+        .cards { grid-template-columns: 1fr; }
+        button { min-width: 0; width: 100%; max-width: 320px; }
+        .brief .btns button { width: auto; }
+        .landing { padding: 20px 16px 28px; }
+        .card { padding: 20px 16px; }
+        .keys { grid-template-columns: auto 1fr; font-size: 12px; }
+      }
       #loading { position: absolute; inset: 0; display: grid; place-items: center; font: 14px var(--sans); letter-spacing: 4px; color: var(--muted); background: var(--bg); }
       #toast { position: absolute; bottom: 96px; left: 50%; transform: translateX(-50%); max-width: min(560px, 90vw); text-align: center; font-size: 14px; color: var(--text); letter-spacing: 0.5px; padding: 8px 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 4px; }
       #toast b { color: var(--brass); }
       #interact { position: absolute; bottom: 150px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 8px; padding: 6px 12px 6px 8px; font-size: 14px; letter-spacing: 0.5px; color: var(--text); }
       #interact kbd { font: 600 12px var(--mono); color: var(--bg); background: var(--brass); border-radius: 3px; padding: 2px 6px; }
       #susp.blending:not(.exposed) .fill { background: var(--ok); }
+      #watched { font: 600 9px var(--sans); letter-spacing: 1px; color: var(--muted); text-align: center; white-space: nowrap; }
+      #watched.seen { color: var(--brass); }
       #ride { position: absolute; inset: 0; display: grid; place-items: center; background: #050406; opacity: 0; visibility: hidden; transition: opacity 0.9s, visibility 0s 0.9s; }
       #ride.show { opacity: 1; visibility: visible; transition: opacity 0.9s; }
       #ride .card { text-align: center; padding: 22px 30px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
@@ -191,7 +258,7 @@
           <div class="warn hidden" id="dossier-warn">TARGET DISGUISED</div>
         </div>
         <div id="killfeed"></div>
-        <div id="susp"><div class="bar"><div class="fill"></div><div class="tick"></div></div><div class="label">SUSPICION</div><div id="exposed">EXPOSED</div></div>
+        <div id="susp"><div class="bar"><div class="fill"></div><div class="tick"></div></div><div class="label">SUSPICION</div><div id="exposed">EXPOSED</div><div id="watched">UNSEEN</div></div>
         <div id="crosshair" class="hidden"><i class="t"></i><i class="b"></i><i class="l"></i><i class="r"></i><i class="c"></i></div>
         <div id="dot"></div>
         <div id="hitmarker"></div>
@@ -217,26 +284,58 @@
       </div>
 
       <div id="menu-title" class="screen hidden">
-        <div class="title">
-          <h1>DOUBLE <span>AGENT</span></h1>
-          <div class="tag">One target. One hunter. A station full of strangers.</div>
+        <img id="title-still" class="hidden" alt="" src="" />
+        <div class="landing">
+          <section class="brand">
+            <div class="board-line"><i></i>Platform 1 · 8 agents · 8:00</div>
+            <h1>DOUBLE <span>AGENT</span></h1>
+            <div class="rule"></div>
+            <p class="tag">One target. One hunter. A station full of strangers.</p>
+            <div class="btns">
+              <button class="primary" data-action="play">Play</button>
+              <button data-action="practice">Practice</button>
+              <button data-action="howto">How to Play</button>
+              <button data-action="settings">Settings</button>
+            </div>
+            <p class="touch-note hidden" id="touch-note">Double Agent is played with a mouse and keyboard. Have a look around, then come back on a computer to play.</p>
+          </section>
+          <section class="explainer" aria-labelledby="what-h">
+            <h2 id="what-h">What is Double Agent?</h2>
+            <div class="cards" id="explainer-cards">
+              <article class="xcard"><svg viewBox="0 0 240 120" aria-hidden="true"><rect width="240" height="120" rx="4" fill="#121115"/><g fill="#2c2e33" stroke="#3d4047" stroke-width="0.8"><g transform="translate(30,70) scale(0.9)"><circle cx="0" cy="-26" r="5.5" fill="#c9b49a" stroke="none"/><rect x="-7" y="-36" width="14" height="3" fill="#1a1a1c" stroke="none"/><rect x="-4.5" y="-41" width="9" height="6" fill="#1a1a1c" stroke="none"/><rect x="-8" y="-20" width="16" height="22" rx="4"/><rect x="-6" y="2" width="5" height="14" rx="2"/><rect x="1" y="2" width="5" height="14" rx="2"/><path d="M0 -19 L-1.4 -10 L0 -8 L1.4 -10Z" fill="#c9a25a" stroke="none"/></g><g transform="translate(58,74) scale(0.95)"><circle cx="0" cy="-26" r="5.5" fill="#c9b49a" stroke="none"/><rect x="-8" y="-20" width="16" height="22" rx="4"/><rect x="-6" y="2" width="5" height="14" rx="2"/><rect x="1" y="2" width="5" height="14" rx="2"/><path d="M0 -19 L-1.4 -10 L0 -8 L1.4 -10Z" fill="#c9a25a" stroke="none"/></g><g transform="translate(86,68) scale(0.85)"><circle cx="0" cy="-26" r="5.5" fill="#c9b49a" stroke="none"/><rect x="-7" y="-36" width="14" height="3" fill="#1a1a1c" stroke="none"/><rect x="-4.5" y="-41" width="9" height="6" fill="#1a1a1c" stroke="none"/><rect x="-8" y="-20" width="16" height="22" rx="4"/><rect x="-6" y="2" width="5" height="14" rx="2"/><rect x="1" y="2" width="5" height="14" rx="2"/></g><g transform="translate(114,76) scale(1)"><circle cx="0" cy="-26" r="5.5" fill="#c9b49a" stroke="none"/><rect x="-8" y="-20" width="16" height="22" rx="4"/><rect x="-6" y="2" width="5" height="14" rx="2"/><rect x="1" y="2" width="5" height="14" rx="2"/><path d="M0 -19 L-1.4 -10 L0 -8 L1.4 -10Z" fill="#c9a25a" stroke="none"/></g><g transform="translate(142,70) scale(0.9)"><circle cx="0" cy="-26" r="5.5" fill="#c9b49a" stroke="none"/><rect x="-7" y="-36" width="14" height="3" fill="#1a1a1c" stroke="none"/><rect x="-4.5" y="-41" width="9" height="6" fill="#1a1a1c" stroke="none"/><rect x="-8" y="-20" width="16" height="22" rx="4"/><rect x="-6" y="2" width="5" height="14" rx="2"/><rect x="1" y="2" width="5" height="14" rx="2"/><path d="M0 -19 L-1.4 -10 L0 -8 L1.4 -10Z" fill="#c9a25a" stroke="none"/></g><g transform="translate(170,74) scale(0.95)"><circle cx="0" cy="-26" r="5.5" fill="#c9b49a" stroke="none"/><rect x="-8" y="-20" width="16" height="22" rx="4"/><rect x="-6" y="2" width="5" height="14" rx="2"/><rect x="1" y="2" width="5" height="14" rx="2"/></g><g transform="translate(198,69) scale(0.85)"><circle cx="0" cy="-26" r="5.5" fill="#c9b49a" stroke="none"/><rect x="-7" y="-36" width="14" height="3" fill="#1a1a1c" stroke="none"/><rect x="-4.5" y="-41" width="9" height="6" fill="#1a1a1c" stroke="none"/><rect x="-8" y="-20" width="16" height="22" rx="4"/><rect x="-6" y="2" width="5" height="14" rx="2"/><rect x="1" y="2" width="5" height="14" rx="2"/><path d="M0 -19 L-1.4 -10 L0 -8 L1.4 -10Z" fill="#c9a25a" stroke="none"/></g><g transform="translate(222,75) scale(0.9)"><circle cx="0" cy="-26" r="5.5" fill="#c9b49a" stroke="none"/><rect x="-8" y="-20" width="16" height="22" rx="4"/><rect x="-6" y="2" width="5" height="14" rx="2"/><rect x="1" y="2" width="5" height="14" rx="2"/><path d="M0 -19 L-1.4 -10 L0 -8 L1.4 -10Z" fill="#c9a25a" stroke="none"/></g><g transform="translate(44,108) scale(1)"><circle cx="0" cy="-26" r="5.5" fill="#c9b49a" stroke="none"/><rect x="-8" y="-20" width="16" height="22" rx="4"/><rect x="-6" y="2" width="5" height="14" rx="2"/><rect x="1" y="2" width="5" height="14" rx="2"/><path d="M0 -19 L-1.4 -10 L0 -8 L1.4 -10Z" fill="#c9a25a" stroke="none"/></g><g transform="translate(72,104) scale(0.95)"><circle cx="0" cy="-26" r="5.5" fill="#c9b49a" stroke="none"/><rect x="-7" y="-36" width="14" height="3" fill="#1a1a1c" stroke="none"/><rect x="-4.5" y="-41" width="9" height="6" fill="#1a1a1c" stroke="none"/><rect x="-8" y="-20" width="16" height="22" rx="4"/><rect x="-6" y="2" width="5" height="14" rx="2"/><rect x="1" y="2" width="5" height="14" rx="2"/><path d="M0 -19 L-1.4 -10 L0 -8 L1.4 -10Z" fill="#c9a25a" stroke="none"/></g><g transform="translate(100,110) scale(1.05)"><circle cx="0" cy="-26" r="5.5" fill="#c9b49a" stroke="none"/><rect x="-8" y="-20" width="16" height="22" rx="4"/><rect x="-6" y="2" width="5" height="14" rx="2"/><rect x="1" y="2" width="5" height="14" rx="2"/></g><g transform="translate(128,104) scale(0.95)"><circle cx="0" cy="-26" r="5.5" fill="#c9b49a" stroke="none"/><rect x="-7" y="-36" width="14" height="3" fill="#1a1a1c" stroke="none"/><rect x="-4.5" y="-41" width="9" height="6" fill="#1a1a1c" stroke="none"/><rect x="-8" y="-20" width="16" height="22" rx="4"/><rect x="-6" y="2" width="5" height="14" rx="2"/><rect x="1" y="2" width="5" height="14" rx="2"/><path d="M0 -19 L-1.4 -10 L0 -8 L1.4 -10Z" fill="#c9a25a" stroke="none"/></g><g transform="translate(156,110) scale(1)"><circle cx="0" cy="-26" r="5.5" fill="#c9b49a" stroke="none"/><rect x="-8" y="-20" width="16" height="22" rx="4"/><rect x="-6" y="2" width="5" height="14" rx="2"/><rect x="1" y="2" width="5" height="14" rx="2"/><path d="M0 -19 L-1.4 -10 L0 -8 L1.4 -10Z" fill="#c9a25a" stroke="none"/></g><g transform="translate(184,106) scale(0.95)"><circle cx="0" cy="-26" r="5.5" fill="#c9b49a" stroke="none"/><rect x="-7" y="-36" width="14" height="3" fill="#1a1a1c" stroke="none"/><rect x="-4.5" y="-41" width="9" height="6" fill="#1a1a1c" stroke="none"/><rect x="-8" y="-20" width="16" height="22" rx="4"/><rect x="-6" y="2" width="5" height="14" rx="2"/><rect x="1" y="2" width="5" height="14" rx="2"/></g><g transform="translate(212,110) scale(1)"><circle cx="0" cy="-26" r="5.5" fill="#c9b49a" stroke="none"/><rect x="-8" y="-20" width="16" height="22" rx="4"/><rect x="-6" y="2" width="5" height="14" rx="2"/><rect x="1" y="2" width="5" height="14" rx="2"/><path d="M0 -19 L-1.4 -10 L0 -8 L1.4 -10Z" fill="#c9a25a" stroke="none"/></g></g><text x="12" y="20" fill="#9a9387" font-family="JetBrains Mono, monospace" font-size="9" letter-spacing="1.5">8 AGENTS · 112 COMMUTERS</text></svg><h3>Everyone is a stranger.</h3><p>8 assassins hide among 112 commuters in near-identical charcoal suits. Act like a commuter and nobody looks twice.</p></article>
+              <article class="xcard"><svg viewBox="0 0 240 120" aria-hidden="true"><rect width="240" height="120" rx="4" fill="#121115"/><rect x="14" y="14" width="104" height="92" rx="3" fill="#191820" stroke="#6b5a36"/><text x="22" y="28" fill="#c9a25a" font-family="Inter, sans-serif" font-weight="600" font-size="7" letter-spacing="1.5">DOSSIER</text><text x="22" y="42" fill="#ece6da" font-family="Playfair Display, serif" font-weight="600" font-size="11">Agent Wren</text><g fill="#d8d1c4" font-family="Inter, sans-serif" font-size="7.5"><text x="22" y="57">— Charcoal suit</text><text x="22" y="69">— Teal tie</text><text x="22" y="81">— Wears a hat</text><text x="22" y="93">— Glasses</text></g><g transform="translate(176,98)"><rect x="-13" y="-62" width="26" height="4" fill="#1a1a1c"/><rect x="-8" y="-71" width="16" height="10" fill="#1a1a1c"/><circle cx="0" cy="-50" r="9" fill="#c9b49a"/><rect x="-8" y="-53" width="16" height="3.5" rx="1" fill="#111"/><rect x="-14" y="-40" width="28" height="36" rx="6" fill="#2c2e33" stroke="#3d4047"/><path d="M0 -39 L-2.5 -24 L0 -20 L2.5 -24Z" fill="#1f9aa0"/><rect x="-10" y="-4" width="8" height="22" rx="3" fill="#24262b"/><rect x="2" y="-4" width="8" height="22" rx="3" fill="#24262b"/></g><g stroke="#c9a25a" stroke-width="0.8" fill="none"><path d="M118 77 L150 77 L163 -2" transform="translate(0,40)"/><path d="M118 65 L176 65" /><path d="M118 89 L168 89 L170 47" /></g></svg><h3>Hunt your target.</h3><p>Your dossier describes one person: tie colour, hat, glasses, hair. Find them in the crowd. <b>Q</b> scans for their direction.</p></article>
+              <article class="xcard"><svg viewBox="0 0 240 120" aria-hidden="true"><rect width="240" height="120" rx="4" fill="#121115"/><defs><marker id="ah" viewBox="0 0 6 6" refX="5" refY="3" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 L6 3 L0 6Z" fill="#c9a25a"/></marker></defs><circle cx="120" cy="60" r="40" fill="none" stroke="#3a352b" stroke-dasharray="3 4"/><path d="M128 21 A40 40 0 0 1 152 36" stroke="#c9a25a" stroke-width="1.2" fill="none" marker-end="url(#ah)"/><path d="M157 47 A40 40 0 0 1 157 73" stroke="#c9a25a" stroke-width="1.2" fill="none" marker-end="url(#ah)"/><path d="M152 84 A40 40 0 0 1 128 99" stroke="#c9a25a" stroke-width="1.2" fill="none" marker-end="url(#ah)"/><path d="M112 99 A40 40 0 0 1 88 84" stroke="#c9a25a" stroke-width="1.2" fill="none" marker-end="url(#ah)"/><path d="M83 73 A40 40 0 0 1 83 47" stroke="#c9a25a" stroke-width="1.2" fill="none" marker-end="url(#ah)"/><path d="M88 36 A40 40 0 0 1 112 21" stroke="#c9a25a" stroke-width="1.2" fill="none" marker-end="url(#ah)"/><g font-family="Inter, sans-serif" font-size="7.5" text-anchor="middle"><circle cx="120" cy="20" r="9" fill="#c9a25a"/><text x="120" y="23" fill="#0d0c0f" font-weight="700">YOU</text><circle cx="155" cy="40" r="7" fill="#2c2e33" stroke="#ff3b3b"/><circle cx="155" cy="80" r="7" fill="#2c2e33" stroke="#3d4047"/><circle cx="120" cy="100" r="7" fill="#2c2e33" stroke="#3d4047"/><circle cx="85" cy="80" r="7" fill="#2c2e33" stroke="#3d4047"/><circle cx="85" cy="40" r="7" fill="#2c2e33" stroke="#ff3b3b" stroke-dasharray="2 1.5"/><text x="190" y="43" fill="#ff6b5b">your target</text><text x="50" y="43" fill="#ff6b5b">your hunter</text></g></svg><h3>Someone is hunting you.</h3><p>Every spy hunts the next in a ring. Kill your target and you inherit theirs. Your hunter is out there, watching for a tell.</p></article>
+              <article class="xcard"><svg viewBox="0 0 240 120" aria-hidden="true"><rect width="240" height="120" rx="4" fill="#121115"/><rect x="26" y="14" width="14" height="92" rx="2" fill="#1d1c21" stroke="#3a352b"/><rect x="26" y="58" width="14" height="48" rx="2" fill="#c9a25a"/><line x1="22" y1="51" x2="44" y2="51" stroke="#ff3b3b" stroke-width="1.5"/><text x="48" y="54" fill="#ff6b5b" font-family="JetBrains Mono, monospace" font-size="8">60</text><g font-family="Inter, sans-serif" font-size="8"><text x="80" y="30" fill="#8fcf9b">▼ walk · sit · read</text><text x="80" y="44" fill="#8fcf9b">▼ out of sight: nothing counts</text><text x="80" y="66" fill="#ff6b5b">▲ run · draw · aim</text><text x="80" y="80" fill="#ff6b5b">▲ the tracks · firing = 100</text></g><g transform="translate(214,26)" fill="none" stroke="#c9a25a" stroke-width="1.2"><path d="M-14 0 Q0 -10 14 0 Q0 10 -14 0Z"/><circle cx="0" cy="0" r="3.5" fill="#c9a25a"/></g><text x="80" y="101" fill="#9a9387" font-family="Inter, sans-serif" font-size="7.5">Each witness judges only what they see</text></svg><h3>Blend in or be found.</h3><p>Running, aiming and the tracks raise suspicion in whoever sees you; sitting and reading (<b>G</b>) cool it. A hunter whose suspicion of you passes 60 sees you glow <span class="red">red</span>.</p></article>
+            </div>
+            <div class="scoreboard-board" aria-label="Scoring">
+              <div class="row head"><span>Scoring</span><span>Points</span></div>
+              <div class="row"><span>Your target</span><span>+100</span></div>
+              <div class="row"><span>· unseen by other spies</span><span>+50</span></div>
+              <div class="row"><span>· headshot</span><span>+25</span></div>
+              <div class="row"><span>Your hunter</span><span>+50</span></div>
+              <div class="row neg"><span>Any other spy</span><span>−25</span></div>
+              <div class="row neg"><span>A civilian (+ revealed)</span><span>−50</span></div>
+            </div>
+          </section>
+        </div>
+      </div>
+
+      <div id="menu-briefing" class="screen hidden">
+        <div class="brief">
+          <h2 class="h">YOUR BRIEFING</h2>
+          <div id="brief-card"></div>
+          <div class="dots" id="brief-dots"><i></i><i></i><i></i><i></i></div>
           <div class="btns">
-            <button class="primary" data-action="play">Play</button>
-            <button data-action="howto">How to Play</button>
-            <button data-action="settings">Settings</button>
+            <button data-action="brief-back">Back</button>
+            <button class="primary" data-action="brief-next">Next</button>
           </div>
         </div>
       </div>
 
       <div id="menu-howto" class="screen hidden">
         <div class="card howto">
-          <h2 class="h">YOUR BRIEFING</h2>
-          <ol>
-            <li><b>Find your target.</b> Your dossier (top right) describes them. Press <b>Q</b> to scan: an arrow shows their direction and distance.</li>
-            <li><b>Blend in.</b> Walk, idle, sit on a bench or read the paper (<b>G</b>). Acting like a commuter cools your suspicion faster, and hunters learn less from watching you. The crowd is your cover. Someone is hunting <i>you</i> too.</li>
-            <li><b>Watch your suspicion.</b> Running, drawing or aiming your pistol raises it. Above 60 you glow <span class="red">red</span> to your hunter.</li>
-            <li><b>Don't kill civilians.</b> −50 points, and every spy sees where you are.</li>
-          </ol>
+          <h2 class="h">HOW TO PLAY</h2>
+          <div id="howto-cards"></div>
           <div class="keys">
             <kbd>WASD</kbd><span>Walk · <kbd>Shift</kbd> run · <kbd>C</kbd>/<kbd>Ctrl</kbd> crouch · <kbd>Space</kbd> jump</span>
             <kbd>RMB</kbd><span>Draw &amp; aim · <kbd>LMB</kbd> fire · <kbd>R</kbd> reload</span>
@@ -244,6 +343,7 @@
             <kbd>G</kbd><span>Interact: sit, read the paper, drop to the tracks, climb up, board a train</span>
             <kbd>Tab</kbd><span>Scoreboard · <kbd>Esc</kbd> pause · <kbd>F3</kbd> debug</span>
           </div>
+          <p style="font-size:13px;color:var(--muted);line-height:1.5;margin:0 0 16px">The tracks: walk off a platform edge or press <b style="color:var(--brass)">G</b>; Space or G climbs back up. Moving trains kill. Trains at the platform: walk in through open doors; stay aboard to ride out and lose your hunter. Don't kill civilians: −50, and every spy sees where you are.</p>
           <div class="btns"><button class="primary" data-action="howto-done">Got it</button></div>
         </div>
       </div>

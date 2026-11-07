@@ -17,6 +17,34 @@ export interface SuspicionInput {
   onTracks?: boolean;
 }
 
+/**
+ * Suspicion gain per second for what a spy is visibly doing (0 when acting human).
+ * `proximityActive` is true once the spy has lingered near another spy past the delay.
+ */
+export function suspicionGain(inp: SuspicionInput, proximityActive: boolean): number {
+  const c = CONFIG.suspicion;
+  let gain = 0;
+  if (inp.running) gain += c.run * (inp.cover ? c.runCoverFactor : 1);
+  if (inp.drawn) gain += c.drawn;
+  if (inp.aiming) gain += c.aim;
+  if (inp.onTracks) gain += c.onTracks;
+  if (proximityActive) gain += c.proximity;
+  return gain;
+}
+
+/** Decay per second while an observer sees nothing suspicious (faster while the spy blends in). */
+export function suspicionDecay(blend: SuspicionInput['blend']): number {
+  const c = CONFIG.suspicion;
+  return blend === 'seated' ? c.seatedDecay : blend === 'activity' ? c.activityDecay : c.decay;
+}
+
+/** One observer's suspicion of one spy, stepped by dt (seen: the observer can see the spy right now). */
+export function stepObserved(value: number, gain: number, decay: number, seen: boolean, dt: number): number {
+  const v = seen && gain > 0 ? value + gain * dt : value - decay * dt;
+  return v < 0 ? 0 : v > CONFIG.suspicion.max ? CONFIG.suspicion.max : v;
+}
+
+/** Single-observer reference model (what one witness who sees everything would think). */
 export function updateSuspicion(s: SpyState, inp: SuspicionInput, dt: number): void {
   const c = CONFIG.suspicion;
   let gain = 0;

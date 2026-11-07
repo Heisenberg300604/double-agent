@@ -5,7 +5,8 @@ import { CONFIG } from '../config';
 import type { World } from '../sim/world';
 import { CrowdRenderer } from './crowd';
 import { Effects } from './effects';
-import { buildEnvironment, buildMapMeshes, createMapMaterials, type MapVisuals } from './mapMesh';
+import { buildEnvironment, buildMapMeshes, createMapMaterials, cullMapChunks, supportsMultiDraw, type MapVisuals } from './mapMesh';
+import { ViewCull } from './viewCull';
 import { TrainRenderer } from './trains';
 import { Atmosphere } from './atmosphere';
 import { QualityScaler } from './quality';
@@ -66,6 +67,10 @@ export class GameRenderer {
   private fov: number = CONFIG.weapon.fovNormal;
   drawCalls = 0;
   triangles = 0;
+  readonly cull = new ViewCull();
+  /** For the F3 overlay: map chunks and crowd instances actually drawn. */
+  chunksDrawn = 0;
+  agentsDrawn = 0;
 
   constructor(container: HTMLElement, world: World) {
     this.container = container;
@@ -86,7 +91,7 @@ export class GameRenderer {
       this.scene.add(p);
     }
 
-    this.map = buildMapMeshes(world.layout, createMapMaterials());
+    this.map = buildMapMeshes(world.layout, createMapMaterials(), supportsMultiDraw());
     this.scene.add(this.map.group);
     this.trains = new TrainRenderer(world.layout, this.map);
     this.scene.add(this.trains.group);
@@ -94,7 +99,7 @@ export class GameRenderer {
     this.atmosphere = new Atmosphere(world.layout);
     this.scene.add(this.atmosphere.group);
     this.crowd = new CrowdRenderer(world.agents.length + 4, world.layout.pois);
-    this.scene.add(this.crowd.shadows, this.crowd.mesh, this.crowd.outline);
+    this.scene.add(this.crowd.shadows, this.crowd.mesh, this.crowd.far, this.crowd.outline);
     this.scene.add(this.effects.group);
 
     this.createRenderer(true);
@@ -123,6 +128,7 @@ export class GameRenderer {
       m.needsUpdate = true;
     }
     this.viewmodel.setEnvironment(this.env);
+    this.effects.setEnvironment(this.env);
     if (old) {
       this.container.replaceChild(this.renderer.domElement, old.domElement);
       old.dispose();
@@ -189,7 +195,11 @@ export class GameRenderer {
     this.camera.position.set(cam.x, cam.y, cam.z);
     this.camera.rotation.set(cam.pitch, cam.yaw, cam.roll);
 
-    this.crowd.update(world.agents, o.alpha, o.hideId, o.outlined, performance.now() / 1000);
+    // Predictive view culling: only the map chunks and people in (or about to enter) the view.
+    this.cull.update(cam, o.dt, this.camera.fov, this.camera.aspect, this.camera.far);
+    this.chunksDrawn = cullMapChunks(this.map.chunks, (b) => this.cull.boxVisible(b));
+    this.crowd.update(world.agents, o.alpha, o.hideId, o.outlined, performance.now() / 1000, (x, y, z, r) => this.cull.sphereVisible(x, y, z, r), this.camera.position);
+    this.agentsDrawn = this.crowd.mesh.count + this.crowd.far.count;
     this.effects.update(o.dt, world.smokes, o.revealed, this.camera.position);
     this.stationMinutes += o.dt / 60;
     this.map.board.update(this.stationMinutes, o.dt);
@@ -197,7 +207,7 @@ export class GameRenderer {
     this.map.led.update(this.stationMinutes, o.dt);
     const vh = this.renderer.domElement.height;
     this.atmosphere.update(performance.now() / 1000, vh, this.camera.fov, this.effects.particleScale);
-    this.trains.update(world.trains.trains, this.hideTrainsBeyond);
+    this.trains.update(world.trains.trains, this.hideTrainsBeyond, o.alpha);
     this.viewmodel.setActivity(o.showViewmodel && !o.drawn ? o.activity : 'none');
     this.viewmodel.update(o.dt, o.drawn && o.showViewmodel, o.aiming, o.reloadProgress, o.moveSpeed, o.running, this.camera.aspect, this.fov * 0.85);
 

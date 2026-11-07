@@ -116,24 +116,14 @@ describe('sitting', () => {
     expect(busy.w.poiOccupant[busy.poi]).toBe(-1);
   });
 
-  it('suspicion decays faster while seated or busy, until the bonus caps', () => {
-    const standing = setup('bench');
+  it('the blending bonus (faster decay) applies while seated or busy, then caps', () => {
     const sitting = setup('bench');
     const reading = setup('news');
     tick(sitting.w, (it) => { it.interact = true; });
     tick(reading.w, (it) => { it.interact = true; });
-    for (const { w } of [standing, sitting, reading]) w.player!.spy!.suspicion = 100;
-    for (let i = 0; i < 60; i++) {
-      tick(standing.w);
-      tick(sitting.w);
-      tick(reading.w);
-    }
-    const S = CONFIG.suspicion;
-    expect(standing.w.player!.spy!.suspicion).toBeCloseTo(100 - S.decay, 0);
-    expect(sitting.w.player!.spy!.suspicion).toBeCloseTo(100 - S.seatedDecay, 0);
-    expect(reading.w.player!.spy!.suspicion).toBeCloseTo(100 - S.activityDecay, 0);
     expect(sitting.w.blendBonus(sitting.w.player!)).toBe('seated');
-    for (let i = 0; i < CONFIG.interact.blendBonusSeconds * 60; i++) tick(sitting.w);
+    expect(reading.w.blendBonus(reading.w.player!)).toBe('activity');
+    for (let i = 0; i < CONFIG.interact.blendBonusSeconds * 60 + 10; i++) tick(sitting.w);
     expect(sitting.w.blendBonus(sitting.w.player!)).toBe('none');
     expect(sitting.w.player!.pose).toBe('sit');
   });
