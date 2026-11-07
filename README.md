@@ -2,7 +2,9 @@
 
 A first-person spy shooter for the browser. Eight assassins in near-identical suits hide in a crowd of civilians inside a grand train station. Each one has a secret target and is hunted by someone they don't know. Acting human keeps you hidden. Acting like a killer gets you found.
 
-Single player: you and 7 AI spies, plus 112 AI civilians, across a 156 m × 54 m station. It has a concourse with a gallery, a west waiting room and restaurant, shop corridors, and three 70 m platforms where trains arrive, dwell and depart. Geometry, textures and most sound are procedural. The only shipped assets are 14 short CC0 gunshot, reload, casing, holster and impact recordings (about 140 KB, loaded after the title screen; see [docs/CREDITS.md](docs/CREDITS.md)). Without them, the game falls back to synthesised sound.
+Single player: you and 7 AI spies, plus 112 AI civilians, across a 156 m × 54 m station. It has a concourse with a gallery, a west waiting room and restaurant, shop corridors, and three 70 m platforms where trains arrive, dwell and depart. Geometry, textures and most sound are procedural. The shipped assets are 14 short CC0 gun, casing and impact recordings (about 140 KB, loaded after the title screen), three self-hosted OFL fonts (about 118 KB), and one 42 KB title still for low quality; see [docs/CREDITS.md](docs/CREDITS.md). Without the recordings the game falls back to synthesised sound.
+
+The title screen shows the live station behind the logotype, a "What is Double Agent?" strip of four illustrated cards and a departure-board scoring table. The first time you press Play, a four-card briefing comes first, and that first match shows contextual tips (your dossier, sitting, suspicion, the scanner, the tracks, the trains). After that, Play starts a match straight away; How to Play is always in the menu.
 
 ## Run
 

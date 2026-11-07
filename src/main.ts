@@ -51,8 +51,9 @@ class Game {
   private attractT = 0;
   private readonly cam: CameraPose = { x: 0, y: 0, z: 0, yaw: 0, pitch: 0, roll: 0 };
   private seed = 0;
-  /** One-time contextual tips for new players. */
+  /** One-time contextual tips for new players (first match only). */
   private hints = new Set<string>();
+  private tipsOn = false;
   private matchTime = 0;
   private remoteStepTimer = 0;
   /** Station life: announcements, door cycles (pause-aware timers). */
@@ -80,23 +81,26 @@ class Game {
     this.menus = new Menus(this.settings, {
       play: () => {
         this.audio.start();
-        if (!this.settings.seenHowTo) this.menus.briefing();
-        else this.startMatch();
+        // First run: the illustrated briefing, then a match with contextual tips.
+        if (!this.settings.tutorialDone) this.menus.briefing();
+        else this.startMatch(false);
       },
-      howtoDone: () => {
-        this.settings.seenHowTo = true;
+      briefingDone: () => {
+        this.settings.tutorialDone = true;
         saveSettings(this.settings);
-        this.startMatch();
+        this.startMatch(true);
       },
+      howtoDone: () => this.startMatch(false),
       resume: () => this.resume(),
       quit: () => this.toTitle(),
-      again: () => this.startMatch(),
+      again: () => this.startMatch(false),
       settingsChanged: (s) => {
         this.settings = s;
         saveSettings(s);
         this.renderer.baseFov = s.fov;
         this.audio.setVolume(s.volume);
         if (s.quality !== this.renderer.setting) this.renderer.setQuality(s.quality);
+        this.syncTitleStill();
       },
     });
 
@@ -119,6 +123,7 @@ class Game {
     document.getElementById('loading')!.remove();
     console.info(`[double-agent] ready in ${Math.round(performance.now())} ms`);
     this.menus.show('title');
+    this.syncTitleStill();
     // Recorded sounds download only after the title screen is up (procedural until then).
     window.setTimeout(() => this.audio.preloadSamples(), 300);
     requestAnimationFrame((t) => this.frame(t));
@@ -131,11 +136,30 @@ class Game {
     const spies = Number(params.get('spies')) || CONFIG.match.spies;
     const w = new World({ seed: this.seed, withPlayer, spies });
     if (withPlayer) console.info(`[double-agent] match seed ${this.seed} (add ?seed=${this.seed} to replay)`);
+    else {
+      // Title-screen backdrop: the station goes about its day; nobody acts like a spy.
+      w.brains.clear();
+      for (const s of w.spies) s.civ = { state: 'wander', timer: 0, poi: -1 };
+    }
     return w;
   }
 
+  /** Title backdrop on Low quality: a still image instead of the live station. */
+  private get titleStill(): boolean {
+    return this.settings.quality === 'low';
+  }
+
+  private syncTitleStill(): void {
+    const img = document.getElementById('title-still') as HTMLImageElement;
+    const on = this.titleStill;
+    if (on && !img.getAttribute('src')) img.src = 'img/title.webp';
+    img.classList.toggle('hidden', !on);
+  }
+
   // ---------------------------------------------------------------- state changes
-  private startMatch(): void {
+  private startMatch(tips: boolean): void {
+    this.tipsOn = tips;
+    this.hints.clear();
     this.world = this.makeWorld(true);
     const p = this.world.player!;
     this.yaw = p.yaw;
@@ -224,7 +248,7 @@ class Game {
         if (this.world.over) break;
       }
       if (this.world.over && this.state === 'playing') this.endRound();
-    } else if (this.state === 'title') {
+    } else if (this.state === 'title' && !this.titleStill) {
       const steps = this.loop.advance(dt);
       for (let i = 0; i < steps; i++) this.world.step(this.loop.dt);
       this.world.drainEvents();
@@ -543,6 +567,11 @@ class Game {
 
   // ---------------------------------------------------------------- render
   private renderFrame(dt: number): void {
+    // Low quality title: the still image stands in for the live station (no 3D work at all).
+    if (this.state === 'title' && this.titleStill) {
+      this.audio.update(dt);
+      return;
+    }
     const w = this.world;
     const alpha = this.loop.alpha;
     const me = w.player;
@@ -578,15 +607,9 @@ class Game {
       this.updateHud(dt, tgt);
       if (this.state === 'playing') this.updateHints(dt, tgt);
     } else {
-      // Attract mode: slow pan across the concourse from the balcony.
+      // Title backdrop: a slow, seeded camera drift through the concourse.
       this.attractT += dt;
-      const a = this.attractT * 0.05;
-      this.cam.x = -10 + Math.sin(a) * 11;
-      this.cam.y = 10.5;
-      this.cam.z = 14;
-      this.cam.yaw = Math.sin(a * 0.7) * 0.45;
-      this.cam.pitch = -0.42;
-      this.cam.roll = 0;
+      titleCamera(this.attractT + (this.seed % 997), this.cam);
     }
 
     const sp = me?.spy;
@@ -638,7 +661,8 @@ class Game {
   }
 
   private hint(key: string, text: string): void {
-    if (this.hints.has(key)) return;
+    // Contextual tips are part of the first-match tutorial only.
+    if (!this.tipsOn || this.hints.has(key)) return;
     this.hints.add(key);
     this.hud.toast(text);
   }
@@ -648,7 +672,9 @@ class Game {
     const s = me.spy!;
     this.matchTime += dt;
     if (!me.alive) return;
-    if (this.matchTime > 5 && s.cdScanner === 0 && s.scanTimer === 0) this.hint('scan', 'Press Q to scan — the arrow points to your target.');
+    if (this.matchTime > 1.5) this.hint('dossier', "Check your dossier (top right). That's who you're hunting.");
+    if (s.suspicion > 40) this.hint('susp40', "You're drawing attention. Slow down, or get out of sight.");
+    if (this.matchTime > 14 && s.cdScanner === 0 && s.scanTimer === 0) this.hint('scan', 'Press Q to scan — the arrow points to your target.');
     if (s.scanTimer > 0) this.hint('scanned', 'Match the dossier (top right) against people in that direction.');
     if (s.suspicion >= CONFIG.suspicion.exposed) this.hint('exposed', 'Someone saw too much: anyone who watched you is now suspicious, and a hunter who saw it sees you outlined in red. Walk calmly, out of sight, to cool off.');
     if (s.drawn && s.watchers === 0) this.hint('unseen', 'Nobody can see you, so drawing raises no suspicion. Each person only judges what they see.');
@@ -727,6 +753,36 @@ class Game {
     const showBoard = this.input.isDown('Tab') && this.state === 'playing';
     this.hud.setScoreboard(showBoard, showBoard ? w.spyRanking().map((a) => this.scoreRow(a)) : []);
   }
+}
+
+/** Waypoints of the title-screen camera loop (checked clear of pillars and the clock). */
+const TITLE_PATH: [number, number, number][] = [[-34, 3.2, 4], [-18, 2.6, 6.5], [-2, 3.0, 6.5], [12, 3.4, 3.5], [12, 2.8, -5], [-4, 3.2, -6.5], [-20, 2.6, -6.5], [-34, 3.0, -3]];
+
+function catmull(p0: number, p1: number, p2: number, p3: number, t: number): number {
+  return 0.5 * (2 * p1 + (-p0 + p2) * t + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t * t + (-p0 + 3 * p1 - 3 * p2 + p3) * t * t * t);
+}
+
+function titlePoint(u: number, out: number[]): void {
+  const n = TITLE_PATH.length;
+  const f = ((u % n) + n) % n;
+  const i = Math.floor(f), t = f - i;
+  for (let c = 0; c < 3; c++) {
+    out[c] = catmull(TITLE_PATH[(i - 1 + n) % n][c], TITLE_PATH[i][c], TITLE_PATH[(i + 1) % n][c], TITLE_PATH[(i + 2) % n][c], t);
+  }
+}
+
+const tp = [0, 0, 0], tq = [0, 0, 0];
+/** Camera pose along the title loop at time t (s): ~1 m/s, looking ahead and slightly inward. */
+function titleCamera(t: number, cam: CameraPose): void {
+  const u = t / 14;
+  titlePoint(u, tp);
+  titlePoint(u + 0.35, tq);
+  cam.x = tp[0];
+  cam.y = tp[1];
+  cam.z = tp[2];
+  cam.yaw = dirToYaw(tq[0] - tp[0], tq[2] - tp[2]) + 0.35 * Math.sin(t * 0.07);
+  cam.pitch = -0.12 + 0.04 * Math.sin(t * 0.05);
+  cam.roll = 0;
 }
 
 inject();

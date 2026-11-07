@@ -24,7 +24,21 @@ Each sound was downloaded as Freesound's high-quality preview, then trimmed, con
 | `shot_suppressed_3` (.ogg, .m4a) | [Silenced Pistol Layered (Powerful)](https://freesound.org/people/Paul368/sounds/255716/) (Freesound #255716) | Paul368 | [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/) | Cut: whole clip; mono, normalised, faded, re-encoded |
 | `slide_release` (.ogg, .m4a) | [Springfield Armory 1911 Slide Release](https://freesound.org/people/areniporgen/sounds/827946/) (Freesound #827946) | areniporgen | [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/) | Cut: whole clip; mono, normalised, faded, re-encoded |
 
-## Fonts and models
+## Fonts (`public/fonts/`)
 
-None yet. Add rows here, with the licence, before shipping any font, model or texture file.
+Downloaded from Google Fonts as the Latin-subset variable WOFF2 files Google serves (unmodified), and self-hosted. Each family's licence text ships next to it as `OFL-*.txt`, as the SIL Open Font License requires. Total: about 118 KB.
+
+| File | Family | Source | Copyright | Licence |
+|---|---|---|---|---|
+| `playfair-display-latin.woff2` | Playfair Display (display serif) | [Google Fonts](https://fonts.google.com/specimen/Playfair+Display) | 2017 The Playfair Display Project Authors (Reserved Font Name "Playfair Display") | [SIL OFL 1.1](https://openfontlicense.org) (`OFL-playfairdisplay.txt`) |
+| `inter-latin.woff2` | Inter (UI and body) | [Google Fonts](https://fonts.google.com/specimen/Inter) | 2020 The Inter Project Authors | [SIL OFL 1.1](https://openfontlicense.org) (`OFL-inter.txt`) |
+| `jetbrains-mono-latin.woff2` | JetBrains Mono (HUD numbers, departure boards) | [Google Fonts](https://fonts.google.com/specimen/JetBrains+Mono) | 2020 The JetBrains Mono Project Authors | [SIL OFL 1.1](https://openfontlicense.org) (`OFL-jetbrainsmono.txt`) |
+
+## Images
+
+`public/img/title.webp` (the low-quality title backdrop) is a screenshot of the game itself. The explainer illustrations are inline SVG drawn for the game.
+
+## Models
+
+None. Add rows here, with the licence, before shipping any model or texture file.
 
