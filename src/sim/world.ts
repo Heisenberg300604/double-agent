@@ -5,8 +5,8 @@ import { CONFIG } from '../config';
 import { Rng } from '../core/rng';
 import { SpatialHash } from '../core/spatialHash';
 import type { Vec3 } from '../core/vec';
-import { buildGrandStation, type MapLayout } from '../world/mapData';
-import { CollisionWorld } from '../world/collision';
+import { buildGrandStation, type Box, type MapLayout } from '../world/mapData';
+import { CollisionWorld, type TrainRayShape } from '../world/collision';
 import { NavGraph } from '../world/navGraph';
 import { civilianAppearance, spyAppearances } from './appearance';
 import { Contracts } from './contracts';
@@ -22,7 +22,7 @@ import { activityFor, findInteractable, onTrackBed, type Interactable } from './
 import { followPath, clearGoal } from '../ai/steering';
 import { SpyBrain } from '../ai/spyBrain';
 import { TrainSystem, TRAIN_LENGTH, carOffset, trainSpeed } from './trains';
-import { CAR_FLOOR_Y, buildTrainLayout, type CarLayout } from '../world/trainCars';
+import { CAR_DOOR_HALF, CAR_FLOOR_Y, buildTrainLayout, type CarLayout } from '../world/trainCars';
 
 export const BOT_NAMES = ['Kestrel', 'Marlow', 'Juniper', 'Sable', 'Cobalt', 'Wren', 'Ashby', 'Fenwick', 'Linden', 'Hollis'];
 
@@ -60,7 +60,10 @@ export class World {
   playerInteractable: Interactable | null = null;
   /** Per track: the car layout (train-local), its interior collision, and seat occupancy. */
   readonly carLayouts: CarLayout[];
+  /** Interior collision with the doorways closed, and with them open (walk in and out). */
   private readonly interiorCols: CollisionWorld[];
+  private readonly interiorOpenCols: CollisionWorld[];
+  private readonly trainRayShapes: TrainRayShape[];
   private readonly interiorBounds: { minX: number; maxX: number; minZ: number; maxZ: number }[];
   readonly trainSeatOccupant: Int32Array[];
   /** Agent id → index into Agent.sus (spy order), or -1 for civilians. */
@@ -86,12 +89,16 @@ export class World {
     this.hash = new SpatialHash(b.minX, b.minZ, b.maxX, b.maxZ, 4);
     this.contracts = new Contracts(this.rng);
     this.trains = new TrainSystem(this.layout.tracks, new Rng((opts.seed ?? CONFIG.seed) ^ 0x7a1b));
-    this.trains.writeColliders(this.col, this.layout.bounds.maxX);
     this.carLayouts = this.layout.tracks.map((t) => buildTrainLayout(t.z0, t.z1, t.railY));
     this.interiorBounds = this.layout.tracks.map((t) => ({ minX: -1, maxX: TRAIN_LENGTH + 1, minZ: t.z0 - 1, maxZ: t.z1 + 1 }));
-    this.interiorCols = this.carLayouts.map((c, i) => new CollisionWorld({
-      bounds: this.interiorBounds[i], boxes: c.collide, ramps: [], tracks: [],
-    } as unknown as MapLayout));
+    const interior = (i: number, boxes: Box[]): CollisionWorld => new CollisionWorld({ bounds: this.interiorBounds[i], boxes, ramps: [], tracks: [] } as unknown as MapLayout);
+    this.interiorCols = this.carLayouts.map((c, i) => interior(i, [...c.collide, ...c.doorCollide]));
+    this.interiorOpenCols = this.carLayouts.map((c, i) => interior(i, c.collide));
+    this.trainRayShapes = this.carLayouts.map((c, i) => ({
+      frontX: this.trains.trains[i].frontX, doorsClosed: true, carBounds: c.carBounds, boxes: c.ray, doorBoxes: c.doorRay,
+    }));
+    this.col.trainRays = this.trainRayShapes;
+    this.syncTrainRays();
     this.trainSeatOccupant = this.carLayouts.map((c) => new Int32Array(c.seats.length).fill(-1));
     this.poiOccupant = new Int32Array(this.layout.pois.length).fill(-1);
     for (let i = 0; i < 8; i++) {
@@ -505,67 +512,61 @@ export class World {
     a.away = false;
   }
 
-  /**
-   * Keep riders' world x on their train; take them off the map once the train
-   * clears the trainshed, and bring them back (lock lost, suspicion reset) on
-   * the next arrival.
-   */
-  private updateRiders(): void {
-    const T = CONFIG.trains;
-    const edge = this.layout.bounds.maxX + T.offMapBeyond;
-    for (const a of this.spies) {
-      if (a.aboard < 0) continue;
-      const s = this.trains.trains[a.aboard];
-      a.x = s.frontX + a.localX;
-      if (!a.alive) continue;
-      if (!a.away && s.phase === 'departing' && a.x > edge) {
-        a.away = true;
-        const sp = a.spy!;
-        sp.drawn = sp.aiming = false;
-        sp.firePending = false;
-        this.emit({ type: 'ride', agent: a.id, phase: 'away', track: a.aboard, service: s.service });
-      }
-      if (a.away && s.phase === 'away') {
-        const cap = T.rideMaxOffMap - this.rideExitTime(a.aboard, a.localX) - this.rideEnterTime(a.aboard, a.localX);
-        if (s.duration > cap) s.duration = Math.max(1, cap);
-      }
-      if (a.away && s.phase === 'arriving' && a.x < edge) {
-        a.away = false;
-        this.forgetSuspicion(a);
-        a.spy!.proximityTimer = 0;
-        for (const brain of this.brains.values()) brain.forget(a.id);
-        this.emit({ type: 'ride', agent: a.id, phase: 'return', track: a.aboard, service: s.service });
-      }
+  /** Doorways open for walking and for sight and shots. */
+  doorwaysOpen(track: number): boolean {
+    return this.trains.trains[track].doors >= CONFIG.trains.walkDoors;
+  }
+
+  /** Move the train shells to where the trains are now (sight and bullets). */
+  private syncTrainRays(): void {
+    for (let i = 0; i < this.trainRayShapes.length; i++) {
+      const s = this.trains.trains[i];
+      const r = this.trainRayShapes[i];
+      // Trains out beyond the map can't block anything here.
+      r.frontX = s.frontX > this.layout.bounds.maxX + 2 ? 1e6 : s.frontX;
+      r.doorsClosed = !this.doorwaysOpen(i);
     }
   }
 
-  /** Fraction (0..1, in time) of the approach at which a rider at train-local x crosses the map edge. */
-  private edgeFraction(track: number, localX: number): number {
+  /**
+   * Keep riders' world x on their train. A ride is compressed so it never takes
+   * more than ~10 s from pulling out to stopping at the platform again: after a
+   * short visible departure the rider fades out and the train skips to the late
+   * part of its next arrival. On the way back the rider's hunter loses them and
+   * their suspicion resets.
+   */
+  private updateRiders(): void {
     const T = CONFIG.trains;
-    const dist = this.layout.bounds.maxX + T.offMapBeyond - localX - this.layout.tracks[track].stopX;
-    return Math.sqrt(Math.max(0, Math.min(1, dist / T.approachDistance)));
+    for (const a of this.spies) {
+      if (a.aboard < 0) continue;
+      const s = this.trains.trains[a.aboard];
+      if (a.alive && a.isPlayer) {
+        if (!a.away && s.phase === 'departing' && s.t >= T.rideDepartShow) {
+          a.away = true;
+          const sp = a.spy!;
+          sp.drawn = sp.aiming = false;
+          sp.firePending = false;
+          this.emit({ type: 'ride', agent: a.id, phase: 'away', track: a.aboard, service: s.service });
+          this.trains.setPhase(a.aboard, 'away', 0, T.rideAwaySeconds);
+        } else if (a.away && s.phase === 'arriving') {
+          this.trains.setPhase(a.aboard, 'arriving', T.arriveTime - T.rideArriveShow, T.arriveTime);
+          a.away = false;
+          this.forgetSuspicion(a);
+          a.spy!.proximityTimer = 0;
+          for (const brain of this.brains.values()) brain.forget(a.id);
+          this.emit({ type: 'ride', agent: a.id, phase: 'return', track: a.aboard, service: s.service });
+        }
+      }
+      a.x = s.frontX + a.localX;
+      if (a.away) a.px = a.x;
+    }
   }
 
-  /** Departing: seconds from when the rider clears the map edge until the train is 'away'. */
-  private rideExitTime(track: number, localX: number): number {
-    return CONFIG.trains.departTime * (1 - this.edgeFraction(track, localX));
-  }
-
-  /** Arriving: seconds from the start of the approach until the rider is back inside the map edge. */
-  private rideEnterTime(track: number, localX: number): number {
-    return CONFIG.trains.arriveTime * (1 - this.edgeFraction(track, localX));
-  }
-
-  /** Seconds until an away rider is back on the map (estimate), or -1 if not away. */
+  /** Seconds until an away rider is back (the ride card's countdown), or -1 if not away. */
   rideEta(a: Agent): number {
     if (!a.away || a.aboard < 0) return -1;
     const s = this.trains.trains[a.aboard];
-    const T = CONFIG.trains;
-    const enter = this.rideEnterTime(a.aboard, a.localX);
-    if (s.phase === 'departing') return T.departTime - s.t + Math.min(T.awayMax, T.rideMaxOffMap - this.rideExitTime(a.aboard, a.localX) - enter) + enter;
-    if (s.phase === 'away') return s.duration - s.t + enter;
-    if (s.phase === 'arriving') return Math.max(0, enter - s.t);
-    return 0;
+    return s.phase === 'away' ? Math.max(0, s.duration - s.t) : 0;
   }
 
   // ------------------------------------------------------------------ tracks
@@ -620,6 +621,17 @@ export class World {
           const dx = a.x - px, dz = a.z - pz;
           const d2 = dx * dx + dz * dz;
           if (d2 >= r * r) continue;
+          // An open doorway: let the player walk in; once past the side, they're aboard.
+          if (a.isPlayer && !moving && this.doorwaysOpen(s.track) && this.inDoorway(s.track, a.x - s.frontX)) {
+            if (a.z > z0 + 0.02 && a.z < z1 - 0.02) {
+              a.aboard = s.track;
+              a.localX = a.x - s.frontX;
+              this.stopBlending(a);
+              this.emit({ type: 'ride', agent: a.id, phase: 'board', track: s.track, service: s.service });
+              break;
+            }
+            continue;
+          }
           if (moving && onTrackBed(this, a)) {
             this.killAgent(a, null, false, 'train');
             break;
@@ -637,9 +649,16 @@ export class World {
             else a.z = z1 + r + 1e-4;
           }
         }
-        if (!a.alive) break;
+        if (!a.alive || a.aboard >= 0) break;
       }
     }
+  }
+
+  /** Is train-local x inside a doorway with room for a body? */
+  private inDoorway(track: number, localX: number): boolean {
+    const room = CAR_DOOR_HALF - CONFIG.body.radius + 0.06;
+    for (const d of this.carLayouts[track].doors) if (Math.abs(localX - d.x) < room) return true;
+    return false;
   }
 
   /** Horn at people on the bed ahead of a moving train; nearby civilians panic. */
@@ -841,8 +860,8 @@ export class World {
 
     // Trains move first so sight lines and shots see the current cars.
     this.trains.step(dt, (e) => this.emit(e));
-    this.trains.writeColliders(this.col, this.layout.bounds.maxX);
     this.updateRiders();
+    this.syncTrainRays();
 
     // Spatial hash.
     this.hash.clear();
@@ -886,9 +905,19 @@ export class World {
         // Inside a train: move in train-local space against the car interior.
         const frontX = this.trains.trains[a.aboard].frontX;
         a.x = a.localX;
-        jumped = stepMovement(a, this.interiorCols[a.aboard], dt, this.interiorBounds[a.aboard]);
+        const open = this.doorwaysOpen(a.aboard);
+        jumped = stepMovement(a, (open ? this.interiorOpenCols : this.interiorCols)[a.aboard], dt, this.interiorBounds[a.aboard]);
         a.localX = a.x;
         a.x = frontX + a.localX;
+        // Walked out through an open doorway onto the platform.
+        const car = this.carLayouts[a.aboard];
+        if (open && a.pose !== 'sit' && (a.z < car.a - 0.02 || a.z > car.b + 0.02)) {
+          const track = a.aboard;
+          a.aboard = -1;
+          a.y = Math.max(a.y, 0);
+          a.px = a.x;
+          this.emit({ type: 'ride', agent: a.id, phase: 'alight', track, service: this.trains.trains[track].service });
+        }
       } else {
         jumped = stepMovement(a, this.col, dt, this.layout.bounds);
       }

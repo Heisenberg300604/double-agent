@@ -41,6 +41,17 @@ export interface RayHit {
   nz: number;
 }
 
+type Aabb = { minX: number; minY: number; minZ: number; maxX: number; maxY: number; maxZ: number };
+
+export interface TrainRayShape {
+  /** World x of the train front (train-local x = world x - frontX). */
+  frontX: number;
+  doorsClosed: boolean;
+  carBounds: readonly Aabb[];
+  boxes: readonly Aabb[];
+  doorBoxes: readonly Aabb[];
+}
+
 /** A sunken floor area (a track bed) where the ground is below 0. */
 export interface Pit {
   minX: number;
@@ -62,8 +73,11 @@ export class CollisionWorld {
   private readonly stamps: Uint32Array;
   private stampId = 1;
   private readonly tmpCells: number[] = [];
-  /** Moving solids (trains): block rays only. Updated by the simulation each tick. */
-  dynamic: { minX: number; minY: number; minZ: number; maxX: number; maxY: number; maxZ: number }[] = [];
+  /**
+   * Train shells for sight and bullets (walls, floor, roof; window holes open, doorways
+   * open while the doors are). Boxes are train-local in x; updated by the simulation each tick.
+   */
+  trainRays: TrainRayShape[] = [];
 
   constructor(layout: MapLayout) {
     this.boxes = layout.boxes.filter((b) => b.collide);
@@ -345,14 +359,26 @@ export class CollisionWorld {
       }
       if (cx < 0 || cx >= this.cols || cz < 0 || cz >= this.rows) break;
     }
-    // Moving trains (few boxes, brute force, allocation-free).
-    for (const b of this.dynamic) {
-      const t = rayAabb(ox, oy, oz, dx, dy, dz, b.minX, b.minY, b.minZ, b.maxX, b.maxY, b.maxZ, best);
-      if (t < best) {
-        best = t;
-        nx = slabAxis === 0 ? slabSign : 0;
-        ny = slabAxis === 1 ? slabSign : 0;
-        nz = slabAxis === 2 ? slabSign : 0;
+    // Trains: per-car broad phase in train-local space, then the shell boxes (allocation-free).
+    for (const tr of this.trainRays) {
+      const lx = ox - tr.frontX;
+      for (const cb of tr.carBounds) {
+        // Origin inside the car counts as a hit at t=0 for the AABB, so it is still tested.
+        if (rayAabb(lx, oy, oz, dx, dy, dz, cb.minX, cb.minY, cb.minZ, cb.maxX, cb.maxY, cb.maxZ, best) === Infinity) continue;
+        for (let pass = 0; pass < 2; pass++) {
+          const list = pass === 0 ? tr.boxes : tr.doorsClosed ? tr.doorBoxes : null;
+          if (!list) continue;
+          for (const b of list) {
+            if (b.maxX < cb.minX || b.minX > cb.maxX) continue;
+            const t = rayAabb(lx, oy, oz, dx, dy, dz, b.minX, b.minY, b.minZ, b.maxX, b.maxY, b.maxZ, best);
+            if (t < best) {
+              best = t;
+              nx = slabAxis === 0 ? slabSign : 0;
+              ny = slabAxis === 1 ? slabSign : 0;
+              nz = slabAxis === 2 ? slabSign : 0;
+            }
+          }
+        }
       }
     }
     if (hit) {

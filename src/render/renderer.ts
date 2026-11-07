@@ -198,7 +198,7 @@ export class GameRenderer {
     this.map.led.update(this.stationMinutes, o.dt);
     const vh = this.renderer.domElement.height;
     this.atmosphere.update(performance.now() / 1000, vh, this.camera.fov, this.effects.particleScale);
-    this.trains.update(world.trains.trains, this.hideTrainsBeyond);
+    this.trains.update(world.trains.trains, this.hideTrainsBeyond, o.alpha);
     this.viewmodel.setActivity(o.showViewmodel && !o.drawn ? o.activity : 'none');
     this.viewmodel.update(o.dt, o.drawn && o.showViewmodel, o.aiming, o.reloadProgress, o.moveSpeed, o.running, this.camera.aspect, this.fov * 0.85);
 
