@@ -21,7 +21,8 @@ function box(w: number, h: number, d: number, x: number, y: number, z: number): 
 
 /** Box with rounded (bevelled) edges. */
 function rbox(w: number, h: number, d: number, x: number, y: number, z: number, r: number): THREE.BufferGeometry {
-  const g = new RoundedBoxGeometry(w, h, d, 2, r).toNonIndexed();
+  // RoundedBoxGeometry is already non-indexed.
+  const g: THREE.BufferGeometry = new RoundedBoxGeometry(w, h, d, 2, r);
   g.translate(x, y, z);
   return g;
 }
@@ -166,12 +167,12 @@ export class Viewmodel {
     };
     const handR = new THREE.Mesh(merge([
       rbox(0.022, 0.085, 0.062, 0.024, -0.05, 0.035, 0.009), // back of hand
-      fingerX(0.0095, 0.03, 0.003, -0.033, -0.006), // fingers wrapping the front strap
-      fingerX(0.0095, 0.03, 0.003, -0.052, -0.001),
-      fingerX(0.009, 0.028, 0.003, -0.071, 0.004),
+      fingerX(0.0083, 0.032, 0.003, -0.033, -0.006), // fingers wrapping the front strap
+      fingerX(0.0083, 0.032, 0.003, -0.052, -0.001),
+      fingerX(0.0078, 0.03, 0.003, -0.071, 0.004),
       knuckle(0.027, -0.03, 0.0), knuckle(0.027, -0.05, 0.004), knuckle(0.027, -0.069, 0.009),
-      fingerZ(0.0065, 0.04, 0.02, -0.014, -0.03), // index finger along the frame
-      fingerZ(0.0075, 0.045, -0.021, -0.004, -0.01), // thumb on the left side
+      fingerZ(0.0056, 0.04, 0.02, -0.014, -0.03), // index finger along the frame
+      fingerZ(0.0064, 0.045, -0.021, -0.004, -0.01), // thumb on the left side
     ].map((g) => { g.rotateX(-0.1); return g; })), skin);
 
     // Suit sleeve over a white shirt cuff with a brass cufflink, along the forearm.
@@ -200,10 +201,10 @@ export class Viewmodel {
     // Left support hand (visible when aiming).
     const handL = new THREE.Mesh(merge([
       rbox(0.02, 0.07, 0.06, -0.03, -0.065, 0.03, 0.008),
-      fingerX(0.009, 0.03, -0.006, -0.088, 0.0),
-      fingerX(0.0088, 0.028, -0.006, -0.07, -0.004),
+      fingerX(0.008, 0.03, -0.006, -0.088, 0.0),
+      fingerX(0.0078, 0.028, -0.006, -0.07, -0.004),
       knuckle(-0.03, -0.088, 0.0), knuckle(-0.03, -0.07, -0.004),
-      fingerZ(0.0065, 0.04, -0.026, -0.03, -0.012),
+      fingerZ(0.0058, 0.04, -0.026, -0.03, -0.012),
     ]), skin);
     const fl = forearm(0.7, -0.55, -0.045, -0.105, 0.07);
     this.leftHand.add(handL, new THREE.Mesh(fl.cuff, cuff), new THREE.Mesh(fl.arm, sleeve), new THREE.Mesh(fl.link, brass));
