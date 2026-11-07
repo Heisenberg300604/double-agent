@@ -162,6 +162,8 @@
       #interact { position: absolute; bottom: 150px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 8px; padding: 6px 12px 6px 8px; font-size: 14px; letter-spacing: 0.5px; color: var(--text); }
       #interact kbd { font: 600 12px var(--mono); color: var(--bg); background: var(--brass); border-radius: 3px; padding: 2px 6px; }
       #susp.blending:not(.exposed) .fill { background: var(--ok); }
+      #watched { font: 600 9px var(--sans); letter-spacing: 1px; color: var(--muted); text-align: center; white-space: nowrap; }
+      #watched.seen { color: var(--brass); }
       #ride { position: absolute; inset: 0; display: grid; place-items: center; background: #050406; opacity: 0; visibility: hidden; transition: opacity 0.9s, visibility 0s 0.9s; }
       #ride.show { opacity: 1; visibility: visible; transition: opacity 0.9s; }
       #ride .card { text-align: center; padding: 22px 30px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
@@ -191,7 +193,7 @@
           <div class="warn hidden" id="dossier-warn">TARGET DISGUISED</div>
         </div>
         <div id="killfeed"></div>
-        <div id="susp"><div class="bar"><div class="fill"></div><div class="tick"></div></div><div class="label">SUSPICION</div><div id="exposed">EXPOSED</div></div>
+        <div id="susp"><div class="bar"><div class="fill"></div><div class="tick"></div></div><div class="label">SUSPICION</div><div id="exposed">EXPOSED</div><div id="watched">UNSEEN</div></div>
         <div id="crosshair" class="hidden"><i class="t"></i><i class="b"></i><i class="l"></i><i class="r"></i><i class="c"></i></div>
         <div id="dot"></div>
         <div id="hitmarker"></div>
@@ -234,7 +236,7 @@
           <ol>
             <li><b>Find your target.</b> Your dossier (top right) describes them. Press <b>Q</b> to scan: an arrow shows their direction and distance.</li>
             <li><b>Blend in.</b> Walk, idle, sit on a bench or read the paper (<b>G</b>). Acting like a commuter cools your suspicion faster, and hunters learn less from watching you. The crowd is your cover. Someone is hunting <i>you</i> too.</li>
-            <li><b>Watch your suspicion.</b> Running, drawing or aiming your pistol raises it. Above 60 you glow <span class="red">red</span> to your hunter.</li>
+            <li><b>Watch who's watching.</b> Each person judges only what they see. Running, drawing or aiming raises suspicion in whoever can see you, and nobody else; drawing unseen is free. A hunter whose own suspicion of you passes 60 sees you glow <span class="red">red</span>. The meter shows your most suspicious witness.</li>
             <li><b>Don't kill civilians.</b> −50 points, and every spy sees where you are.</li>
           </ol>
           <div class="keys">

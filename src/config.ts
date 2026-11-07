@@ -146,6 +146,8 @@ export const CONFIG = {
     panicBodyRadius: 10,
     chatChance: 0.25,
     sitChance: 0.6,
+    /** A civilian who grows this suspicious of someone this close backs away from them. */
+    alarmRadius: 10,
   },
 
   perception: {

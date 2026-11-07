@@ -14,7 +14,7 @@ import { fireShot } from './combat';
 import { endDisguise, segmentInSmoke, updateSmoke, useDisguise, useScanner, useSmoke } from './gadgets';
 import { bodyHeight, stepMovement } from './movement';
 import { killPoints, killRelation } from './scoring';
-import { addSuspicion, updateSuspicion } from './suspicion';
+import { stepObserved, suspicionDecay, suspicionGain } from './suspicion';
 import { emptyIntent, type Agent, type Appearance, type Noise, type SimEvent, type Smoke, type SpyIntent } from './types';
 import { canSee } from '../ai/perception';
 import { civilianThink, panic, standUp } from '../ai/civilianBrain';
@@ -63,6 +63,13 @@ export class World {
   private readonly interiorCols: CollisionWorld[];
   private readonly interiorBounds: { minX: number; maxX: number; minZ: number; maxZ: number }[];
   readonly trainSeatOccupant: Int32Array[];
+  /** Agent id → index into Agent.sus (spy order), or -1 for civilians. */
+  readonly spyIndex: Int32Array;
+  /** Per agent: could it see the player at its last look? (for the HUD's "watched" count) */
+  private readonly seesPlayer: Uint8Array;
+  /** Per spy (spy order): decay rate of others' suspicion this tick (faster while blending). */
+  private spyDecay: Float32Array = new Float32Array(0);
+  private susLen = 0;
   time = 0;
   tick = 0;
   timeLeft: number = CONFIG.match.roundSeconds;
@@ -93,6 +100,7 @@ export class World {
 
     const spyCount = Math.max(CONFIG.match.minSpies, Math.min(CONFIG.match.maxSpies, opts.spies ?? CONFIG.match.spies));
     const civCount = opts.civilians ?? CONFIG.match.civilians;
+    this.susLen = spyCount;
     const looks = spyAppearances(this.rng, spyCount);
     const spawns = this.rng.shuffle([...this.layout.spawns]);
     const withPlayer = opts.withPlayer ?? true;
@@ -104,7 +112,7 @@ export class World {
       a.spy = {
         name: isPlayer ? 'You' : BOT_NAMES[(i - (withPlayer ? 1 : 0)) % BOT_NAMES.length],
         score: 0, kills: 0, deaths: 0, civKills: 0, targetKills: 0,
-        suspicion: 0, proximityTimer: 0,
+        suspicion: 0, watchers: 0, gain: 0, proximityTimer: 0,
         drawn: false, drawTimer: 0, holsterTimer: 0, aiming: false,
         ammo: CONFIG.weapon.magSize, reloadTimer: 0, fireCooldown: 0, firePending: false,
         cdScanner: 0, cdDisguise: 0, cdSmoke: 0, scanTimer: 0, disguiseTimer: 0,
@@ -126,6 +134,10 @@ export class World {
       a.y = this.col.groundHeight(a.x, a.z, n.y + 0.1);
     }
 
+    this.spyIndex = new Int32Array(this.agents.length).fill(-1);
+    this.spies.forEach((s, k) => { this.spyIndex[s.id] = k; });
+    this.seesPlayer = new Uint8Array(this.agents.length);
+    this.spyDecay = new Float32Array(this.spies.length);
     for (const s of this.spies) {
       if (!s.isPlayer) this.brains.set(s.id, new SpyBrain(this, s));
       if (this.player) s.yaw = this.rng.range(-Math.PI, Math.PI);
@@ -143,7 +155,7 @@ export class World {
       crouch: false, onGround: true, pose: 'stand', seatX: 0, seatY: 0, seatZ: 0,
       activity: 'none', blendTimer: 0, standLock: 0,
       mantleT: 0, mantleDur: 1, mantleFromX: 0, mantleFromY: 0, mantleFromZ: 0, mantleToX: 0, mantleToY: 0, mantleToZ: 0,
-      trackPanicTimer: 0, aboard: -1, localX: 0, trainSeat: -1, away: false,
+      trackPanicTimer: 0, aboard: -1, localX: 0, trainSeat: -1, away: false, sus: new Float32Array(this.susLen),
       animPhase: this.rng.range(0, 6.28), alive: true, health: CONFIG.health.max, deadTime: 0,
       appearance: look, baseAppearance: look,
       path: null, pathIndex: 0, goalX: 0, goalY: 0, goalZ: 0, hasGoal: false,
@@ -327,7 +339,8 @@ export class World {
     a.onGround = true;
     a.appearance = a.baseAppearance;
     a.faceYaw = NaN;
-    s.suspicion = 0;
+    this.forgetSuspicion(a);
+    a.sus.fill(0);
     s.proximityTimer = 0;
     s.ammo = CONFIG.weapon.magSize;
     s.reloadTimer = 0;
@@ -361,6 +374,8 @@ export class World {
     a.health = CONFIG.health.max;
     a.pose = 'stand';
     a.appearance = a.baseAppearance = civilianAppearance(this.rng);
+    a.sus.fill(0);
+    this.seesPlayer[a.id] = 0;
     a.faceYaw = NaN;
     a.maxSpeed = this.rng.range(CONFIG.civilian.minSpeed, CONFIG.civilian.maxSpeed);
     a.civ!.state = 'wander';
@@ -516,7 +531,7 @@ export class World {
       }
       if (a.away && s.phase === 'arriving' && a.x < edge) {
         a.away = false;
-        a.spy!.suspicion = 0;
+        this.forgetSuspicion(a);
         a.spy!.proximityTimer = 0;
         for (const brain of this.brains.values()) brain.forget(a.id);
         this.emit({ type: 'ride', agent: a.id, phase: 'return', track: a.aboard, service: s.service });
@@ -878,7 +893,7 @@ export class World {
         jumped = stepMovement(a, this.col, dt, this.layout.bounds);
       }
       if (jumped && a.spy) {
-        addSuspicion(a.spy, CONFIG.suspicion.jump);
+        this.witnessAct(a, CONFIG.suspicion.jump);
         this.emit({ type: 'jump', agent: a.id });
       }
     }
@@ -891,17 +906,30 @@ export class World {
       if (a.alive && this.isBlending(a)) a.blendTimer += dt;
     }
 
-    // Suspicion.
-    for (const s of this.spies) {
-      if (!s.alive || s.away) continue;
+    // Suspicion is per observer: work out what each spy is visibly doing, then let
+    // each agent (staggered, at its own 10 Hz look) judge only what it can see.
+    this.spies.forEach((s, k) => {
       const sp = s.spy!;
-      updateSuspicion(sp, {
-        running: sp.running, drawn: sp.drawn, aiming: sp.aiming, nearSpy: this.nearOtherSpy(s),
-        cover: sp.running && this.inPanickingCrowd(s),
-        blend: this.blendBonus(s),
-        onTracks: onTrackBed(this, s),
-      }, dt);
+      if (!s.alive || s.away) {
+        sp.gain = 0;
+        sp.proximityTimer = 0;
+        this.spyDecay[k] = CONFIG.suspicion.decay;
+        return;
+      }
+      sp.proximityTimer = this.nearOtherSpy(s) ? sp.proximityTimer + dt : 0;
+      const blend = this.blendBonus(s);
+      sp.gain = suspicionGain({
+        running: sp.running, drawn: sp.drawn, aiming: sp.aiming, nearSpy: false,
+        cover: sp.running && this.inPanickingCrowd(s), blend, onTracks: onTrackBed(this, s),
+      }, sp.proximityTimer > CONFIG.suspicion.proximityDelay);
+      this.spyDecay[k] = suspicionDecay(blend);
+    });
+    for (let i = 0; i < this.agents.length; i++) {
+      if ((i + this.tick) % AI_DIVISOR !== 0) continue;
+      const o = this.agents[i];
+      if (o.alive && !o.away) this.observeSpies(o, thinkDt);
     }
+    this.updateDerivedSuspicion();
 
     // Smoke.
     for (const sm of this.smokes) if (sm.active) updateSmoke(this, sm, dt);
@@ -969,6 +997,83 @@ export class World {
       p.z += (dz / d) * (R - d);
     }
     this.col.resolveCircle(p, CONFIG.body.radius, bodyHeight(p), true);
+  }
+
+  // ------------------------------------------------------------------ suspicion (per observer)
+  /** One agent's look around: its own suspicion of each spy rises only while it sees them acting suspiciously. */
+  private observeSpies(obs: Agent, dt: number): void {
+    const exposed = CONFIG.suspicion.exposed;
+    for (let k = 0; k < this.spies.length; k++) {
+      const s = this.spies[k];
+      if (s === obs) continue;
+      let v = obs.sus[k];
+      if (!s.alive || s.away) {
+        obs.sus[k] = Math.max(0, v - CONFIG.suspicion.decay * dt);
+        if (s.isPlayer) this.seesPlayer[obs.id] = 0;
+        continue;
+      }
+      const gain = s.spy!.gain;
+      // Only look (cone + raycast) when it matters: something suspicious to see,
+      // or the player (so the HUD can show who is watching).
+      const look = gain > 0 || (s.isPlayer && !obs.isPlayer);
+      const seen = look && canSee(this, obs, s);
+      v = stepObserved(v, gain, this.spyDecay[k], seen, dt);
+      obs.sus[k] = v;
+      if (s.isPlayer) this.seesPlayer[obs.id] = seen ? 1 : 0;
+      // Civilians act on their own suspicion: back away from someone alarming nearby.
+      if (obs.civ && seen && v >= exposed && obs.civ.state !== 'panic' && Math.hypot(s.x - obs.x, s.z - obs.z) < CONFIG.civilian.alarmRadius) {
+        panic(this, obs, s.x, s.z);
+      }
+    }
+  }
+
+  /**
+   * A one-off suspicious act (a shot, a jump, a scanner pulse): only agents who can
+   * see the spy at this moment add `amount` to their own suspicion of them.
+   */
+  witnessAct(spy: Agent, amount: number): void {
+    const k = this.spyIndex[spy.id];
+    if (k < 0) return;
+    const max = CONFIG.suspicion.max;
+    for (const o of this.agents) {
+      if (o === spy || !o.alive || o.away) continue;
+      if (!canSee(this, o, spy)) continue;
+      o.sus[k] = Math.min(max, o.sus[k] + amount);
+    }
+    this.updateDerivedSuspicion();
+  }
+
+  /** Everyone forgets what they thought of this spy (respawn, return from a ride). */
+  private forgetSuspicion(spy: Agent): void {
+    const k = this.spyIndex[spy.id];
+    if (k < 0) return;
+    for (const o of this.agents) o.sus[k] = 0;
+    spy.spy!.suspicion = 0;
+  }
+
+  /** spy.suspicion = the most suspicious single witness; the player's watcher count for the HUD. */
+  private updateDerivedSuspicion(): void {
+    for (let k = 0; k < this.spies.length; k++) {
+      const s = this.spies[k];
+      let m = 0;
+      for (const o of this.agents) {
+        if (o === s || !o.alive) continue;
+        const v = o.sus[k];
+        if (v > m) m = v;
+      }
+      s.spy!.suspicion = m;
+    }
+    if (this.player) {
+      let n = 0;
+      for (const o of this.agents) if (o !== this.player && o.alive && this.seesPlayer[o.id]) n++;
+      this.player.spy!.watchers = this.player.alive && !this.player.away ? n : 0;
+    }
+  }
+
+  /** What `observer` itself thinks of `spy` (0..100). */
+  suspicionOf(observer: Agent, spy: Agent): number {
+    const k = this.spyIndex[spy.id];
+    return k < 0 ? 0 : observer.sus[k];
   }
 
   /** Which blending bonus applies to this agent right now, if any. */

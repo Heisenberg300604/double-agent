@@ -14,7 +14,10 @@ export interface HudState {
   timeLeft: number;
   score: number;
   rank: string;
+  /** The highest suspicion any single witness holds of you. */
   suspicion: number;
+  /** How many people can see you right now. */
+  watchers: number;
   health: number;
   ammo: number;
   reloading: boolean;
@@ -79,6 +82,7 @@ export class Hud {
   private readonly rideTitle = $('#ride .title');
   private readonly rideEta = $('#ride .eta');
   private readonly prompt = $('#interact');
+  private readonly watched = $('#watched');
   private readonly promptText = $('#interact .text');
   private readonly death = $('#death');
   private readonly deathBy = $('#death-by');
@@ -152,6 +156,11 @@ export class Hud {
     if (this.changed('sus', sus)) {
       this.suspFill.style.height = `${sus}%`;
       this.susp.classList.toggle('exposed', sus >= CONFIG.suspicion.exposed);
+    }
+    const watchedText = s.watchers > 0 ? `SEEN BY ${s.watchers}` : 'UNSEEN';
+    if (this.changed('watched', watchedText)) {
+      this.watched.textContent = watchedText;
+      this.watched.classList.toggle('seen', s.watchers > 0);
     }
     const hp = Math.max(0, Math.round(s.health));
     if (this.changed('hp', hp)) {

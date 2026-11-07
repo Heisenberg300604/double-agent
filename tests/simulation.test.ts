@@ -181,12 +181,17 @@ describe('player movement', () => {
     expect(p.z).toBeLessThan(wallZ - CONFIG.body.radius + 0.01);
   });
 
-  it('jumping raises suspicion by 10', () => {
+  it('jumping in view of someone raises their suspicion by 10', () => {
     const w = new World({ seed: 8, withPlayer: true, civilians: 0 });
+    w.brains.clear();
+    const p = w.player!, o = w.spies[1];
+    p.x = p.px = -6; p.z = p.pz = 0; p.y = 0;
+    o.x = o.px = -6; o.z = o.pz = -5; o.y = 0; o.yaw = Math.PI; // facing +z, at the player
     const intent = emptyIntent();
     intent.jump = true;
     w.setPlayerIntent(intent);
     w.step(DT);
+    expect(w.suspicionOf(o, p)).toBeGreaterThan(9);
     expect(w.player!.spy!.suspicion).toBeGreaterThan(9);
   });
 });

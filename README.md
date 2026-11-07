@@ -51,15 +51,16 @@ Ctrl+W is the browser's close-tab shortcut, so C is the safer crouch key. The ga
   | A civilian | −50, and every spy sees a red marker over you for 5 s |
 
 - **Health.** You have 100 health, and it does not regenerate. A headshot does 100 damage and a body shot does 55. You respawn after 5 s, far from other spies.
-- **Suspicion (0–100).** These actions raise it:
+- **Suspicion is per person (0–100 each).** Every NPC, and you, keeps its own suspicion of each spy, built only from what it has seen itself. Nothing is shared: one witness's alarm tells nobody else anything. While someone can see you, these raise *their* suspicion of you:
   - running: +25/s (less inside a panicking crowd)
   - weapon drawn: +15/s
   - aiming: +30/s
-  - jumping: +10
+  - being on the tracks: +20/s
   - staying within 1.2 m of another spy for more than 3 s: +10/s
+  - jumping: +10, using the scanner: +20
   - firing: sets it to 100
 
-  Walking, idling and crouching let it decay at 20/s. Above 60, your hunter sees you outlined in red. Likewise, you see your target outlined when they are exposed.
+  Out of their sight it decays at 20/s (faster while you blend in). So drawing your gun where nobody can see you costs nothing. The HUD meter shows your most suspicious witness and how many people can see you right now. A hunter whose *own* suspicion of you passes 60 sees you outlined in red. You see your target outlined only if *you* saw them act suspiciously. A civilian who grows that suspicious of someone nearby backs away on their own.
 - **Blending in (G).** Sitting lets suspicion decay at 30/s, and a standing activity (newspaper, departures board, counter) at 26/s. Hunters also learn half as much from watching you while you do it. The bonus stops after 25 s in the same spot. You can draw and fire while seated, but you can't move; standing up takes 0.4 s. Drawing, firing or moving ends a standing activity. AI spies sit and read too, so sitting is not proof of innocence.
 - **The tracks.** You can walk off a platform edge or press G to drop onto a track bed, and climb back up with Space or G at any point along the platform (a 0.7 s mantle; a plain jump is too low). It is a sunken route: crouch and people standing back on the platforms can't see you. It is also reckless. Being down there adds +20/s suspicion, nearby civilians panic, and an arriving or departing train sounds its horn and then kills anyone on its bed (no points for anyone; normal respawn). A stopped train is solid and safe to walk around. Civilians and AI spies never go down there.
 - **Trains.** While a train stands at the platform with its doors open, press G at a door to board. Inside you can walk around and sit on the benches (seated blending works there too), and press G at a door to step off. Nobody can see or shoot into a car, and you can't shoot out. Stay aboard when the doors close and you ride out: once the train clears the trainshed you are off the map for at most 40 s, then come back aboard the next arrival on the same track. Your hunter loses your trail and your suspicion resets, but the round clock keeps running and you can't score while away.
@@ -92,7 +93,7 @@ src/
 - **Simulation is separate from rendering.** The simulation (`sim/`, `ai/`, `world/`) never imports Three.js. It mutates plain data and emits events. The render layer reads that state each frame and interpolates between ticks. A Node server can run `World` unchanged, feeding it `SpyIntent`s from the network instead of the keyboard.
 - **AI thinks at 10 Hz.** Updates are staggered so that each tick only updates one sixth of the agents.
   - **Civilians** wander between points of interest (kiosks, benches, café seats, the info board, platform edges, chat circles), linger there, and panic away from gunshots and bodies.
-  - **Spies** keep a belief weight for each agent they observe. Weights come from scanner pulses, visible suspicion (the red outline), hearing, and watching their target up close. Confidence above 0.7 within 25 m moves a spy from Search to Stalk and then Strike. Each bot has its own reaction time and accuracy, and they sometimes shoot the wrong person.
+  - **Spies** keep a belief weight for each agent they observe. Weights come from scanner pulses, their own suspicion of what they saw (the red outline), hearing, and watching their target up close. Confidence above 0.7 within 25 m moves a spy from Search to Stalk and then Strike. Each bot has its own reaction time and accuracy, and they sometimes shoot the wrong person.
 - **Rendering performance.**
   - Every human is drawn in a single instanced draw call. A jointed rig (hips, knees, shoulders, elbows, neck, waist) runs in the vertex shader: walking and running, sitting, crouching, aiming, death, and idle activities (talking, reading a newspaper, phoning, waiting) with breathing and glances.
   - The static level is merged into about 13 meshes by material *group*, with colours and baked ambient occlusion in vertex colours. The floor, brass and train paint reflect a small procedural environment map.

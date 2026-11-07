@@ -79,10 +79,15 @@ describe('track bed', () => {
     expect(p.y).toBeCloseTo(tr.bedY, 2);
   });
 
-  it('raises suspicion while on the tracks', () => {
+  it('raises suspicion in anyone who watches you on the tracks', () => {
     const w = onBed();
+    const p = w.player!;
+    const tr = w.layout.tracks[1];
+    const obs = w.spies[1];
+    obs.x = obs.px = p.x; obs.z = obs.pz = tr.z1 + 1; obs.y = 0;
+    obs.yaw = 0; // facing -z, down at the bed
     for (let i = 0; i < 60; i++) step(w);
-    expect(w.player!.spy!.suspicion).toBeCloseTo(CONFIG.suspicion.onTracks, 0);
+    expect(w.suspicionOf(obs, p)).toBeCloseTo(CONFIG.suspicion.onTracks, 0);
   });
 
   it('a crouched player on the bed is hidden from people on the platform; standing, they are seen', () => {

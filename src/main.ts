@@ -552,7 +552,8 @@ class Game {
     if (me && this.state !== 'title') {
       const tgtId = w.contracts.targetOf(me.id);
       const tgt = tgtId >= 0 ? w.agents[tgtId] : null;
-      if (tgt && tgt.alive && tgt.spy!.suspicion >= CONFIG.suspicion.exposed) outlined.push(tgt.id);
+      // You see your target outlined only if you yourself saw them act suspiciously.
+      if (tgt && tgt.alive && w.suspicionOf(me, tgt) >= CONFIG.suspicion.exposed) outlined.push(tgt.id);
       for (const s of w.spies) if (s !== me && s.alive && s.spy!.revealTimer > 0) revealed.push(s);
 
       // Camera.
@@ -648,8 +649,9 @@ class Game {
     if (!me.alive) return;
     if (this.matchTime > 5 && s.cdScanner === 0 && s.scanTimer === 0) this.hint('scan', 'Press Q to scan — the arrow points to your target.');
     if (s.scanTimer > 0) this.hint('scanned', 'Match the dossier (top right) against people in that direction.');
-    if (s.suspicion >= CONFIG.suspicion.exposed) this.hint('exposed', 'You are EXPOSED: your hunter sees you outlined in red. Walk calmly to cool off.');
-    if (tgt && tgt.alive && tgt.spy!.suspicion >= CONFIG.suspicion.exposed) this.hint('outline', 'Your target is exposed — the red outline gives them away.');
+    if (s.suspicion >= CONFIG.suspicion.exposed) this.hint('exposed', 'Someone saw too much: anyone who watched you is now suspicious, and a hunter who saw it sees you outlined in red. Walk calmly, out of sight, to cool off.');
+    if (s.drawn && s.watchers === 0) this.hint('unseen', 'Nobody can see you, so drawing raises no suspicion. Each person only judges what they see.');
+    if (tgt && tgt.alive && this.world.suspicionOf(me, tgt) >= CONFIG.suspicion.exposed) this.hint('outline', 'You saw your target act suspiciously — the red outline gives them away.');
     if (this.matchTime > 40 && s.cdDisguise === 0) this.hint('gadgets', 'Feel watched? E changes your suit, F throws smoke that blocks sight.');
     const t = this.world.playerInteractable;
     if (t && t.kind === 'sit') this.hint('sit', 'Press G to sit. Seated agents look harmless and cool off faster.');
@@ -697,6 +699,7 @@ class Game {
       score: s.score,
       rank: `${ordinal(rank)} / ${w.spies.length}`,
       suspicion: s.suspicion,
+      watchers: me.alive ? s.watchers : 0,
       health: me.health,
       ammo: s.ammo,
       reloading: s.reloadTimer > 0,

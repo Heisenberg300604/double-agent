@@ -5,7 +5,7 @@ import { emptyIntent, type SpyState } from '../src/sim/types';
 
 function spy(): SpyState {
   return {
-    name: 't', score: 0, kills: 0, deaths: 0, civKills: 0, targetKills: 0, suspicion: 0, proximityTimer: 0,
+    name: 't', score: 0, kills: 0, deaths: 0, civKills: 0, targetKills: 0, suspicion: 0, watchers: 0, gain: 0, proximityTimer: 0,
     drawn: false, drawTimer: 0, holsterTimer: 0, aiming: false, ammo: 8, reloadTimer: 0, fireCooldown: 0, firePending: false,
     cdScanner: 0, cdDisguise: 0, cdSmoke: 0, scanTimer: 0, disguiseTimer: 0, revealTimer: 0, respawnTimer: 0,
     seenBy: new Map(), lastAttacker: -1, lastAttackTime: 0, running: false, intent: emptyIntent(),
