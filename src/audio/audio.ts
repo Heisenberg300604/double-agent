@@ -423,6 +423,37 @@ export class AudioEngine {
     this.rumble(o, t + 1, 5, 4, seconds - 9, 0.35);
   }
 
+  /** A warning horn from a moving train (someone is on the tracks). */
+  trainHorn(pos: { x: number; y: number; z: number }): void {
+    const o = this.out(pos, 120, 1.2);
+    if (!o) return;
+    const t = this.ctx!.currentTime;
+    this.horn(o, t, 0.6);
+    this.horn(o, t + 0.85, 1.4);
+  }
+
+  /** Brakes locking up: a long metallic screech. */
+  screech(pos: { x: number; y: number; z: number }): void {
+    const o = this.out(pos, 80, 1);
+    if (!o) return;
+    const ctx = this.ctx!, t = ctx.currentTime;
+    const sq = ctx.createOscillator();
+    sq.type = 'sawtooth';
+    sq.frequency.setValueAtTime(3200, t);
+    sq.frequency.linearRampToValueAtTime(2100, t + 2.2);
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = 2700;
+    bp.Q.value = 7;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(0.06, t + 0.08);
+    g.gain.linearRampToValueAtTime(0.0001, t + 2.4);
+    sq.connect(bp).connect(g).connect(o);
+    sq.start(t);
+    sq.stop(t + 2.5);
+  }
+
   /** Door-closing warning beeps from a train. */
   doorBeeps(pos: { x: number; y: number; z: number }): void {
     const o = this.out(pos, 45, 0.5);

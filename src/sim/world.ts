@@ -18,10 +18,10 @@ import { addSuspicion, updateSuspicion } from './suspicion';
 import { emptyIntent, type Agent, type Appearance, type Noise, type SimEvent, type Smoke, type SpyIntent } from './types';
 import { canSee } from '../ai/perception';
 import { civilianThink, panic, standUp } from '../ai/civilianBrain';
-import { activityFor, findInteractable, type Interactable } from './interact';
+import { activityFor, findInteractable, onTrackBed, type Interactable } from './interact';
 import { followPath, clearGoal } from '../ai/steering';
 import { SpyBrain } from '../ai/spyBrain';
-import { TrainSystem } from './trains';
+import { TrainSystem, carOffset, trainSpeed } from './trains';
 
 export const BOT_NAMES = ['Kestrel', 'Marlow', 'Juniper', 'Sable', 'Cobalt', 'Wren', 'Ashby', 'Fenwick', 'Linden', 'Hollis'];
 
@@ -129,6 +129,8 @@ export class World {
       wantX: 0, wantZ: 0, wantJump: false, faceYaw: NaN, speed: 0, maxSpeed: M.walkSpeed,
       crouch: false, onGround: true, pose: 'stand', seatX: 0, seatY: 0, seatZ: 0,
       activity: 'none', blendTimer: 0, standLock: 0,
+      mantleT: 0, mantleDur: 1, mantleFromX: 0, mantleFromY: 0, mantleFromZ: 0, mantleToX: 0, mantleToY: 0, mantleToZ: 0,
+      trackPanicTimer: 0,
       animPhase: this.rng.range(0, 6.28), alive: true, health: CONFIG.health.max, deadTime: 0,
       appearance: look, baseAppearance: look,
       path: null, pathIndex: 0, goalX: 0, goalY: 0, goalZ: 0, hasGoal: false,
@@ -225,7 +227,7 @@ export class World {
     return false;
   }
 
-  killAgent(victim: Agent, killer: Agent | null, headshot: boolean): void {
+  killAgent(victim: Agent, killer: Agent | null, headshot: boolean, cause: 'shot' | 'train' = 'shot'): void {
     if (!victim.alive) return;
     victim.alive = false;
     victim.health = 0;
@@ -270,7 +272,7 @@ export class World {
       this.emit({ type: 'reveal', spy: killerSpy.id });
     }
     this.emit({
-      type: 'kill', killer: killer ? killer.id : -1, victim: victim.id, victimKind: victim.kind,
+      type: 'kill', cause, killer: killer ? killer.id : -1, victim: victim.id, victimKind: victim.kind,
       relation, points, headshot, unseen,
     });
   }
@@ -304,6 +306,7 @@ export class World {
     a.activity = 'none';
     a.blendTimer = 0;
     a.standLock = 0;
+    a.mantleT = 0;
     this.releasePoi(a);
     a.crouch = false;
     a.onGround = true;
@@ -404,9 +407,116 @@ export class World {
     if (a.isPlayer) a.faceYaw = NaN;
   }
 
+  // ------------------------------------------------------------------ tracks
+  /** Is there a train car (stationary or moving) over this point of a track bed? */
+  trainCarAt(x: number, z: number, margin = 0): boolean {
+    const T = CONFIG.trains;
+    for (const s of this.trains.trains) {
+      const tr = this.layout.tracks[s.track];
+      if (z < tr.z0 - margin || z > tr.z1 + margin) continue;
+      for (let i = 0; i < T.cars; i++) {
+        const x0 = s.frontX + carOffset(i);
+        if (x >= x0 - margin && x <= x0 + T.carLength + margin) return true;
+      }
+    }
+    return false;
+  }
+
+  /** Begin a climb up from the bed, or a controlled drop down to it. */
+  startMantle(a: Agent, t: Interactable): void {
+    const up = t.kind === 'climb';
+    this.stopBlending(a);
+    a.mantleDur = up ? CONFIG.tracks.mantleTime : CONFIG.tracks.dropTime;
+    a.mantleT = a.mantleDur;
+    a.mantleFromX = a.x;
+    a.mantleFromY = a.y;
+    a.mantleFromZ = a.z;
+    a.mantleToX = t.x!;
+    a.mantleToY = t.y!;
+    a.mantleToZ = t.z!;
+    a.crouch = false;
+    a.vx = a.vy = a.vz = 0;
+    this.emit({ type: 'mantle', agent: a.id, up });
+  }
+
+  /**
+   * Train cars vs spies (the only agents that can reach a bed): a moving car
+   * kills anyone on its bed; otherwise cars are solid to walk around.
+   */
+  private trainCollisions(): void {
+    const T = CONFIG.trains;
+    const r = CONFIG.body.radius;
+    for (const a of this.spies) {
+      if (!a.alive || a.mantleT > 0) continue;
+      for (const s of this.trains.trains) {
+        const tr = this.layout.tracks[s.track];
+        if (a.z < tr.z0 - r || a.z > tr.z1 + r) continue;
+        const moving = trainSpeed(s) > CONFIG.tracks.killSpeed;
+        for (let i = 0; i < T.cars; i++) {
+          const x0 = s.frontX + carOffset(i), x1 = x0 + T.carLength;
+          const z0 = tr.z0 + 0.06, z1 = tr.z1 - 0.06;
+          const px = Math.min(x1, Math.max(x0, a.x)), pz = Math.min(z1, Math.max(z0, a.z));
+          const dx = a.x - px, dz = a.z - pz;
+          const d2 = dx * dx + dz * dz;
+          if (d2 >= r * r) continue;
+          if (moving && onTrackBed(this, a)) {
+            this.killAgent(a, null, false, 'train');
+            break;
+          }
+          // Solid: push out through the nearest face.
+          if (d2 > 1e-10) {
+            const d = Math.sqrt(d2);
+            a.x += (dx / d) * (r - d + 1e-4);
+            a.z += (dz / d) * (r - d + 1e-4);
+          } else {
+            const m = Math.min(a.x - x0, x1 - a.x, a.z - z0, z1 - a.z);
+            if (m === a.x - x0) a.x = x0 - r - 1e-4;
+            else if (m === x1 - a.x) a.x = x1 + r + 1e-4;
+            else if (m === a.z - z0) a.z = z0 - r - 1e-4;
+            else a.z = z1 + r + 1e-4;
+          }
+        }
+        if (!a.alive) break;
+      }
+    }
+  }
+
+  /** Horn at people on the bed ahead of a moving train; nearby civilians panic. */
+  private trackHazards(dt: number): void {
+    const H = CONFIG.tracks;
+    for (const a of this.spies) {
+      if (!a.alive || !onTrackBed(this, a)) {
+        a.trackPanicTimer = 0;
+        continue;
+      }
+      a.trackPanicTimer -= dt;
+      if (a.trackPanicTimer <= 0) {
+        a.trackPanicTimer = H.panicInterval;
+        this.hash.query(a.x, a.z, H.panicRadius, this.nbr);
+        for (const id of this.nbr) {
+          const o = this.agents[id];
+          if (o.civ && o.alive && o.civ.state !== 'panic' && Math.hypot(o.x - a.x, o.z - a.z) < H.panicRadius) panic(this, o, a.x, a.z);
+        }
+      }
+      for (const s of this.trains.trains) {
+        const tr = this.layout.tracks[s.track];
+        if (s.hornCooldown > 0 || a.z < tr.z0 || a.z > tr.z1) continue;
+        // Arriving trains move west (front end leads); departing trains east (rear end leads).
+        const ahead = s.phase === 'arriving' ? s.frontX - a.x : s.phase === 'departing' ? a.x - (s.frontX + carOffset(CONFIG.trains.cars - 1) + CONFIG.trains.carLength) : -1;
+        if (ahead < 0 || ahead > H.hornRange) continue;
+        s.hornCooldown = H.hornCooldown;
+        this.emit({ type: 'trainHorn', track: s.track, x: s.phase === 'arriving' ? s.frontX : a.x + ahead, z: (tr.z0 + tr.z1) / 2 });
+      }
+    }
+  }
+
   /** The player's interact key and the "any movement cancels" rules. */
   private playerBlending(a: Agent, it: SpyIntent): void {
     const s = a.spy!;
+    if (a.mantleT > 0) {
+      this.playerInteractable = null;
+      return;
+    }
     const moving = Math.hypot(it.moveX, it.moveZ) > 0.1 || it.jump;
     if (this.isBlending(a)) {
       // Drawing or firing cancels a standing activity; a seated agent may still shoot.
@@ -421,8 +531,19 @@ export class World {
       return;
     }
     this.playerInteractable = findInteractable(this, a);
+    const t0 = this.playerInteractable;
+    // Space also climbs out (a plain jump is too low to reach the platform).
+    if (t0 && t0.kind === 'climb' && it.jump) {
+      it.jump = false;
+      it.interact = true;
+    }
     if (it.interact && this.playerInteractable) {
       const t = this.playerInteractable;
+      if (t.kind === 'climb' || t.kind === 'drop') {
+        this.startMantle(a, t);
+        this.playerInteractable = null;
+        return;
+      }
       if (t.kind === 'sit') this.sitDown(a, t.poi);
       else if (t.kind === 'activity') this.startActivity(a, t.poi);
       if (this.isBlending(a)) this.playerInteractable = { kind: a.pose === 'sit' ? 'stand' : 'stop', poi: a.occupiedPoi };
@@ -446,7 +567,7 @@ export class World {
       it.interact = false;
       a.standLock = Math.max(0, a.standLock - dt);
       const blending = this.isBlending(a);
-      const locked = blending || a.standLock > 0;
+      const locked = blending || a.standLock > 0 || a.mantleT > 0;
       a.crouch = !blending && it.mode === 'crouch';
       const speed = it.mode === 'run' ? M.runSpeed : it.mode === 'crouch' ? M.crouchSpeed : M.walkSpeed;
       a.maxSpeed = speed;
@@ -596,7 +717,9 @@ export class World {
         this.emit({ type: 'jump', agent: a.id });
       }
     }
-    if (this.player && this.player.alive && this.player.pose !== 'sit') this.pushPlayerOutOfCrowd(this.player);
+    if (this.player && this.player.alive && this.player.pose !== 'sit' && this.player.mantleT <= 0) this.pushPlayerOutOfCrowd(this.player);
+    this.trainCollisions();
+    this.trackHazards(dt);
 
     // Blending timers (the bonus stops after a while in one spot).
     for (const a of this.agents) {
@@ -611,6 +734,7 @@ export class World {
         running: sp.running, drawn: sp.drawn, aiming: sp.aiming, nearSpy: this.nearOtherSpy(s),
         cover: sp.running && this.inPanickingCrowd(s),
         blend: this.blendBonus(s),
+        onTracks: onTrackBed(this, s),
       }, dt);
     }
 
@@ -672,14 +796,14 @@ export class World {
     for (const id of this.nbr) {
       if (id === p.id) continue;
       const o = this.agents[id];
-      if (!o.alive || Math.abs(o.y - p.y) > 1.2) continue;
+      if (!o.alive || Math.abs(o.y - p.y) > 0.9) continue;
       const dx = p.x - o.x, dz = p.z - o.z;
       const d = Math.hypot(dx, dz);
       if (d >= R || d < 1e-4) continue;
       p.x += (dx / d) * (R - d);
       p.z += (dz / d) * (R - d);
     }
-    this.col.resolveCircle(p, CONFIG.body.radius, bodyHeight(p));
+    this.col.resolveCircle(p, CONFIG.body.radius, bodyHeight(p), true);
   }
 
   /** Which blending bonus applies to this agent right now, if any. */

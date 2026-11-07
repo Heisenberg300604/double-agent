@@ -27,9 +27,22 @@ export interface TrainState {
   /** Increments per visit, used to name services. */
   service: number;
   closingAnnounced: boolean;
+  /** Seconds until the horn may sound again at someone on the bed. */
+  hornCooldown: number;
 }
 
 export const TRAIN_LENGTH = T.cars * T.carLength + (T.cars - 1) * T.carGap;
+
+/** Current speed of a train along the track (m/s, always ≥ 0). */
+export function trainSpeed(s: TrainState): number {
+  const k = Math.min(1, s.t / s.duration);
+  if (s.phase === 'arriving') return (2 * T.approachDistance * (1 - k)) / s.duration;
+  if (s.phase === 'departing') return (2 * T.approachDistance * k) / s.duration;
+  return 0;
+}
+
+/** Car body footprint (XZ) on its track; null if the car is outside the station. */
+export interface CarBox { minX: number; maxX: number; minZ: number; maxZ: number }
 
 /** x offset of each car's front from the train front. */
 export function carOffset(i: number): number {
@@ -49,7 +62,7 @@ export class TrainSystem {
       // One train starts at the platform mid-dwell, the other is a little way out.
       const s: TrainState = {
         track: i, phase: i === 0 ? 'dwell' : 'away', t: 0, duration: i === 0 ? T.dwell : rng.range(18, 30),
-        frontX: tr.stopX, doors: i === 0 ? 1 : 0, service: i * 3, closingAnnounced: false,
+        frontX: tr.stopX, doors: i === 0 ? 1 : 0, service: i * 3, closingAnnounced: false, hornCooldown: 0,
       };
       if (i === 0) s.t = T.dwell * 0.35;
       return s;
@@ -90,6 +103,7 @@ export class TrainSystem {
   step(dt: number, emit: (e: SimEvent) => void): void {
     for (const s of this.trains) {
       s.t += dt;
+      s.hornCooldown = Math.max(0, s.hornCooldown - dt);
       if (s.phase === 'dwell' && !s.closingAnnounced && s.t >= s.duration - T.doorsCloseBefore - 4) {
         s.closingAnnounced = true;
         emit({ type: 'train', track: s.track, phase: 'closing', service: s.service });

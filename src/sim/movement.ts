@@ -26,6 +26,23 @@ export function stepMovement(a: Agent, col: CollisionWorld, dt: number, bounds: 
     a.speed = 0;
     return false;
   }
+  if (a.mantleT > 0) {
+    // Scripted climb: rise first, then move over the edge.
+    a.mantleT = Math.max(0, a.mantleT - dt);
+    const k = 1 - a.mantleT / a.mantleDur;
+    const up = a.mantleToY > a.mantleFromY;
+    const ky = up ? Math.min(1, k / 0.6) : Math.max(0, (k - 0.35) / 0.65) ** 2;
+    const kh = up ? Math.max(0, (k - 0.3) / 0.7) : Math.min(1, k / 0.6);
+    const sy = ky * ky * (3 - 2 * ky), sh = kh * kh * (3 - 2 * kh);
+    const ox = a.x, oz = a.z;
+    a.x = a.mantleFromX + (a.mantleToX - a.mantleFromX) * sh;
+    a.z = a.mantleFromZ + (a.mantleToZ - a.mantleFromZ) * sh;
+    a.y = a.mantleFromY + (a.mantleToY - a.mantleFromY) * sy;
+    a.vx = a.vy = a.vz = 0;
+    a.speed = Math.hypot(a.x - ox, a.z - oz) / dt;
+    a.onGround = a.mantleT <= 0;
+    return false;
+  }
   if (a.pose === 'sit') {
     a.x = a.seatX;
     a.y = a.seatY;
@@ -64,7 +81,7 @@ export function stepMovement(a: Agent, col: CollisionWorld, dt: number, bounds: 
   a.y += a.vy * dt;
 
   const h = bodyHeight(a);
-  col.resolveCircle(a, B.radius, h);
+  col.resolveCircle(a, B.radius, h, a.isPlayer);
 
   // Ground handling.
   const g = col.groundHeight(a.x, a.z, Math.max(a.y, oldY));
@@ -90,7 +107,11 @@ export function stepMovement(a: Agent, col: CollisionWorld, dt: number, bounds: 
   }
   a.x = Math.min(bounds.maxX - B.radius, Math.max(bounds.minX + B.radius, a.x));
   a.z = Math.min(bounds.maxZ - B.radius, Math.max(bounds.minZ + B.radius, a.z));
-  if (a.y < 0) a.y = 0;
+  const floor = col.floorAt(a.x, a.z);
+  if (a.y < floor) {
+    a.y = floor;
+    a.vy = Math.max(0, a.vy);
+  }
 
   a.speed = Math.hypot(a.x - oldX, a.z - oldZ) / dt;
   a.animPhase += a.speed * dt * 2.7;

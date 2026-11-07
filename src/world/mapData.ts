@@ -64,6 +64,8 @@ export interface Box {
   sign?: string;
   /** Blocks movement only; bullets and sight pass through (track-bed guards). */
   rayIgnore?: boolean;
+  /** Track-bed guard: keeps civilians and AI spies off the tracks; the player ignores it. */
+  bedGuard?: boolean;
 }
 
 /** Render-only atmosphere hints (lamp halos, light pools on the floor). */
@@ -78,8 +80,12 @@ export interface Track {
   z1: number;
   /** x of the train's front (west end) when stopped at the buffers. */
   stopX: number;
-  /** Rail level (track bed top). */
+  /** Rail level. */
   railY: number;
+  /** Walkable top of the track bed (the pit floor). */
+  bedY: number;
+  /** West end of the bed (the buffers); it runs east out of the station. */
+  x0: number;
 }
 
 export interface Ramp {
@@ -334,10 +340,12 @@ export function buildGrandStation(): MapLayout {
   box(PLAT_X0, PLAT_X1, -0.3, 0, 14.8, OUTER_Z, 'platform', false);
   box(PLAT_X0, PLAT_X1, -0.3, 0, -11.2, 11.2, 'platform', false);
   box(PLAT_X0, PLAT_X1, -0.3, 0, -OUTER_Z, -14.8, 'platform', false);
+  // Solid platform bodies: invisible walls for anyone down on a track bed, and they stop rays below the platform top.
+  for (const [z0, z1] of [[14.8, OUTER_Z], [-11.2, 11.2], [-OUTER_Z, -14.8]] as [number, number][]) box(PLAT_X0, PLAT_X1 + 1, -1.6, 0, z0, z1, 'invisible');
   const tracks: Track[] = [];
   TRACK_Z.forEach(([z0, z1], ti) => {
     const zc = (z0 + z1) / 2;
-    tracks.push({ platforms: ti === 0 ? [1, 2] : [2, 3], z0, z1, stopX: TRAIN_STOP_X, railY: RAIL_Y });
+    tracks.push({ platforms: ti === 0 ? [1, 2] : [2, 3], z0, z1, stopX: TRAIN_STOP_X, railY: RAIL_Y, bedY: RAIL_Y - 0.15, x0: PLAT_X0 });
     // Track bed extends out of the trainshed into the night.
     box(PLAT_X0, 200, RAIL_Y - 0.4, RAIL_Y - 0.15, z0, z1, 'track', false);
     for (let x = PLAT_X0 + 0.6; x < 200; x += 0.9) box(x, x + 0.25, RAIL_Y - 0.17, RAIL_Y - 0.08, z0 + 0.25, z1 - 0.25, 'woodDark', false);
@@ -348,8 +356,13 @@ export function buildGrandStation(): MapLayout {
       box(PLAT_X0, PLAT_X1, -0.02, 0.015, ze, ze + 0.45 * inward, 'plaster', false);
       box(PLAT_X0, PLAT_X1, 0, 0.02, ze + 0.55 * inward, ze + 0.75 * inward, 'yellow', false);
     }
-    // Movement-only guard over the bed: people can't step onto the tracks, but sight lines and bullets cross freely.
-    box(PLAT_X0 - 0.2, PLAT_X1 + 2, -1.5, 1.6, z0, z1, 'invisible').rayIgnore = true;
+    // Movement-only guard over the bed: civilians and AI spies can't step onto the tracks
+    // (the player can), and sight lines and bullets cross freely.
+    const guard = box(PLAT_X0 - 0.2, PLAT_X1 + 2, -1.5, 1.6, z0, z1, 'invisible');
+    guard.rayIgnore = true;
+    guard.bedGuard = true;
+    // West end of the pit (under the concourse floor).
+    box(PLAT_X0 - 1.5, PLAT_X0, -1.6, 0, z0, z1, 'invisible');
     // Buffer stop.
     box(PLAT_X0, PLAT_X0 + 1.1, RAIL_Y, 1.2, z0 + 0.1, z1 - 0.1, 'metal');
     box(PLAT_X0 + 0.05, PLAT_X0 + 0.15, 0.5, 0.9, z0 + 0.3, z1 - 0.3, 'yellow', false);

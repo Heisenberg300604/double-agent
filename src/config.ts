@@ -93,6 +93,8 @@ export const CONFIG = {
     seatedDecay: 30,
     /** Decay per second during a standing activity (reading, phone, board). */
     activityDecay: 26,
+    /** Gain per second while down on the track bed. */
+    onTracks: 20,
     exposed: 60,
   },
 
@@ -105,6 +107,23 @@ export const CONFIG = {
     standUpTime: 0.4,
     /** The blending bonus (faster decay, weaker observation) stops after this long in one spot. */
     blendBonusSeconds: 25,
+  },
+
+  tracks: {
+    /** Max gap between the body and the platform edge to climb up or drop down (m). */
+    edgeReach: 0.8,
+    /** Facing within this angle of the edge normal to climb or drop. */
+    edgeConeDeg: 60,
+    mantleTime: 0.7,
+    dropTime: 0.45,
+    /** A car moving faster than this kills anyone on its bed (m/s). */
+    killSpeed: 0.5,
+    /** Civilians within this radius panic when someone is down on the tracks. */
+    panicRadius: 6,
+    panicInterval: 2,
+    /** Arriving/departing trains sound the horn at someone on their bed within this distance ahead. */
+    hornRange: 70,
+    hornCooldown: 6,
   },
 
   gadgets: {

@@ -142,6 +142,17 @@ export interface Agent {
   blendTimer: number;
   /** Movement lock while standing up from a seat (s). */
   standLock: number;
+  /** Climbing up from (or dropping down to) a track bed: seconds left, 0 when not. */
+  mantleT: number;
+  mantleDur: number;
+  mantleFromX: number;
+  mantleFromY: number;
+  mantleFromZ: number;
+  mantleToX: number;
+  mantleToY: number;
+  mantleToZ: number;
+  /** Seconds until the next "someone is on the tracks" civilian panic check. */
+  trackPanicTimer: number;
   /** Walk cycle phase (radians). */
   animPhase: number;
   alive: boolean;
@@ -189,6 +200,8 @@ export type SimEvent =
   | { type: 'damage'; victim: number; attacker: number; amount: number; headshot: boolean }
   | {
       type: 'kill';
+      /** How they died: shot, or hit by a moving train. */
+      cause: 'shot' | 'train';
       killer: number;
       victim: number;
       victimKind: AgentKind;
@@ -207,6 +220,9 @@ export type SimEvent =
   | { type: 'jump'; agent: number }
   | { type: 'reveal'; spy: number }
   | { type: 'train'; track: number; phase: 'arriving' | 'arrived' | 'closing' | 'departing'; service: number }
+  /** A moving train sounds its horn at someone on its bed. */
+  | { type: 'trainHorn'; track: number; x: number; z: number }
+  | { type: 'mantle'; agent: number; up: boolean }
   | { type: 'roundEnd' };
 
 export interface Noise {

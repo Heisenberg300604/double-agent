@@ -29,7 +29,7 @@ Optional URL parameters: `?seed=123` replays a match with the same seed (the see
 | Left mouse | Fire |
 | R | Reload |
 | Q / E / F | Scanner / Disguise / Smoke |
-| G | Interact: sit on a bench or café chair, read the paper, check the departures board, wait at a counter. Press again or move to stop. |
+| G | Interact: sit on a bench or café chair, read the paper, check the departures board, wait at a counter. Press again or move to stop. At a platform edge: drop to the tracks, or climb back up (Space also climbs). |
 | Tab | Scoreboard |
 | Esc | Pause |
 | F3 | Debug overlay (FPS, frame time, draw calls, measured ticks/s and walking speed) |
@@ -61,6 +61,7 @@ Ctrl+W is the browser's close-tab shortcut, so C is the safer crouch key. The ga
 
   Walking, idling and crouching let it decay at 20/s. Above 60, your hunter sees you outlined in red. Likewise, you see your target outlined when they are exposed.
 - **Blending in (G).** Sitting lets suspicion decay at 30/s, and a standing activity (newspaper, departures board, counter) at 26/s. Hunters also learn half as much from watching you while you do it. The bonus stops after 25 s in the same spot. You can draw and fire while seated, but you can't move; standing up takes 0.4 s. Drawing, firing or moving ends a standing activity. AI spies sit and read too, so sitting is not proof of innocence.
+- **The tracks.** You can walk off a platform edge or press G to drop onto a track bed, and climb back up with Space or G at any point along the platform (a 0.7 s mantle; a plain jump is too low). It is a sunken route: crouch and people standing back on the platforms can't see you. It is also reckless. Being down there adds +20/s suspicion, nearby civilians panic, and an arriving or departing train sounds its horn and then kills anyone on its bed (no points for anyone; normal respawn). A stopped train is solid and safe to walk around. Civilians and AI spies never go down there.
 - **Gadgets.**
 
   | Gadget | Key | Cooldown | Effect |
@@ -100,7 +101,7 @@ src/
   - Lighting uses no shadow maps: blob shadows go under each character, plus 3 point lights and fog.
   - Effects are pooled buffers, one draw call each.
   - The auto-quality scaler lowers the render scale (1.0 → 0.85 → 0.7) when the 2 s average FPS drops below 50, and raises it again after 5 s above 58.
-- **Trains.** Train movement runs inside the simulation (`sim/trains.ts`), deterministic per seed. Each track cycles through away → arriving (constant deceleration to the buffers) → dwell (doors open) → departing. Moving cars block sight and bullets. Movement-only guards keep people off the track beds without blocking sight lines across them. Announcements, door beeps, braking and horns are driven by the train events.
+- **Trains.** Train movement runs inside the simulation (`sim/trains.ts`), deterministic per seed. Each track cycles through away → arriving (constant deceleration to the buffers) → dwell (doors open) → departing. Moving cars block sight and bullets, and block or kill anyone on their bed. The track beds are real pits 1.2 m below the platforms. Movement-only guards keep civilians and AI spies off them without blocking sight lines across them. Announcements, door beeps, braking and horns are driven by the train events.
 - **Collision.** Agents are circles with a height, tested against AABBs in a 4 m uniform grid. Stairs are ramps. Shooting uses a hitscan raycast against head spheres, body boxes and the AABB grid. It never touches render meshes.
 
 ## Measured

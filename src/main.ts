@@ -417,6 +417,13 @@ class Game {
         case 'train':
           this.onTrain(e);
           break;
+        case 'trainHorn':
+          this.audio.trainHorn({ x: e.x, y: 1.5, z: e.z });
+          if (me.alive && Math.abs(me.z - e.z) < 2.5 && me.y < -0.5) this.hud.centerMessage('Train coming — get off the tracks!', true, 2.5);
+          break;
+        case 'mantle':
+          if (e.agent === me.id) this.audio.footstep(undefined, true);
+          break;
         case 'jump':
         case 'smokeThrow':
         case 'roundEnd':
@@ -427,6 +434,19 @@ class Game {
 
   private onKill(e: Extract<SimEvent, { type: 'kill' }>): void {
     const me = this.world.player!;
+    if (e.cause === 'train') {
+      const v = this.world.agents[e.victim];
+      this.audio.screech({ x: v.x, y: 0.5, z: v.z });
+      if (e.victim === me.id) {
+        this.deathBy = 'Hit by a train';
+        this.hud.killfeed('You were hit by a train', 'bad');
+        this.deathCam = 0;
+        this.audio.killSting(false);
+      } else {
+        this.hud.killfeed(`${this.name(e.victim)} was hit by a train`, 'neutral');
+      }
+      return;
+    }
     const pts = (n: number): string => (n >= 0 ? `+${n}` : `−${-n}`);
     if (e.killer === me.id) {
       switch (e.relation) {
@@ -574,6 +594,8 @@ class Game {
     const t = this.world.playerInteractable;
     if (t && t.kind === 'sit') this.hint('sit', 'Press G to sit. Seated agents look harmless and cool off faster.');
     if (t && t.kind === 'activity') this.hint('activity', 'Press G to blend in here: reading or waiting cools suspicion faster.');
+    if (t && t.kind === 'drop') this.hint('drop', 'G drops you to the tracks: a hidden route if you crouch, but suspicious, and trains kill.');
+    if (t && t.kind === 'climb') this.hint('climb', 'Space or G climbs back up to the platform.');
     if (me.blendTimer > CONFIG.interact.blendBonusSeconds && this.world.isBlending(me)) this.hint('blendcap', 'Lingering too long in one spot stops helping. Move on.');
   }
 

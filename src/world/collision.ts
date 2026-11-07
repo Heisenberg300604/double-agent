@@ -41,9 +41,19 @@ export interface RayHit {
   nz: number;
 }
 
+/** A sunken floor area (a track bed) where the ground is below 0. */
+export interface Pit {
+  minX: number;
+  maxX: number;
+  minZ: number;
+  maxZ: number;
+  y: number;
+}
+
 export class CollisionWorld {
   readonly boxes: Box[];
   readonly ramps: Ramp[];
+  readonly pits: Pit[];
   private readonly minX: number;
   private readonly minZ: number;
   private readonly cols: number;
@@ -58,6 +68,7 @@ export class CollisionWorld {
   constructor(layout: MapLayout) {
     this.boxes = layout.boxes.filter((b) => b.collide);
     this.ramps = layout.ramps;
+    this.pits = layout.tracks.map((t) => ({ minX: t.x0, maxX: 400, minZ: t.z0, maxZ: t.z1, y: t.bedY }));
     this.minX = layout.bounds.minX - 2;
     this.minZ = layout.bounds.minZ - 2;
     this.cols = Math.ceil((layout.bounds.maxX + 2 - this.minX) / CELL);
@@ -123,9 +134,21 @@ export class CollisionWorld {
     return r.y0 + (r.y1 - r.y0) * (t < 0 ? 0 : t > 1 ? 1 : t);
   }
 
+  /** The pit at (x,z), if any. */
+  pitAt(x: number, z: number): Pit | null {
+    for (const p of this.pits) if (x >= p.minX && x <= p.maxX && z >= p.minZ && z <= p.maxZ) return p;
+    return null;
+  }
+
+  /** Base floor height at (x,z): 0, or the bed top inside a track pit. */
+  floorAt(x: number, z: number): number {
+    const p = this.pitAt(x, z);
+    return p ? p.y : 0;
+  }
+
   /** Highest walkable surface under (x,z) reachable from feetY (within step height). */
   groundHeight(x: number, z: number, feetY: number, support = 0.12): number {
-    let best = 0;
+    let best = this.floorAt(x, z);
     const reach = feetY + STEP + 0.01;
     const ids = this.gather(x - support, z - support, x + support, z + support);
     for (let i = 0; i < ids.length; i++) {
@@ -142,14 +165,18 @@ export class CollisionWorld {
     return best;
   }
 
-  /** Push a circle out of blocking boxes. Mutates pos. Returns true if any contact happened. */
-  resolveCircle(pos: { x: number; y: number; z: number }, r: number, height: number): boolean {
+  /**
+   * Push a circle out of blocking boxes. Mutates pos. Returns true if any contact happened.
+   * `ignoreBedGuards` lets the player step down onto the track beds.
+   */
+  resolveCircle(pos: { x: number; y: number; z: number }, r: number, height: number, ignoreBedGuards = false): boolean {
     let hit = false;
     for (let pass = 0; pass < 3; pass++) {
       let moved = false;
       const ids = this.gather(pos.x - r, pos.z - r, pos.x + r, pos.z + r);
       for (let i = 0; i < ids.length; i++) {
         const b = this.boxes[ids[i]];
+        if (ignoreBedGuards && b.bedGuard) continue;
         if (!CollisionWorld.blocks(b, pos.y, height)) continue;
         const px = pos.x < b.minX ? b.minX : pos.x > b.maxX ? b.maxX : pos.x;
         const pz = pos.z < b.minZ ? b.minZ : pos.z > b.maxZ ? b.maxZ : pos.z;
@@ -198,7 +225,7 @@ export class CollisionWorld {
       const b = this.boxes[ids[i]];
       if (x > b.minX && x < b.maxX && y > b.minY && y < b.maxY && z > b.minZ && z < b.maxZ) return true;
     }
-    return y < 0;
+    return y < this.floorAt(x, z);
   }
 
   /**
@@ -226,10 +253,21 @@ export class CollisionWorld {
     let best = maxT;
     let nx = 0, ny = 0, nz = 0;
     if (dy < -1e-6) {
+      // The floor plane at 0, open over the track pits; their floors are lower planes.
       const t = -oy / dy;
-      if (t >= 0 && t < best) {
+      if (t >= 0 && t < best && !this.pitAt(ox + dx * t, oz + dz * t)) {
         best = t;
         ny = 1;
+      }
+      for (const p of this.pits) {
+        const tp = (p.y - oy) / dy;
+        if (tp < 0 || tp >= best) continue;
+        const hx = ox + dx * tp, hz = oz + dz * tp;
+        if (hx >= p.minX && hx <= p.maxX && hz >= p.minZ && hz <= p.maxZ) {
+          best = tp;
+          nx = nz = 0;
+          ny = 1;
+        }
       }
     }
     const stamp = this.nextStamp();
